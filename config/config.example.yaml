@@ -64,7 +64,10 @@ agent:                       # `k2loop serve` (systemd: k2-agent) — Open WebUI
   project: ""                # mesajda proje yolu yoksa kullanılacak repo, ör. ~/projem
   research_first: true       # kodlamadan önce internette hazır çözüm ara
   research_iterations: 2
-  stop_on_failed_step: true
+  # kod hedefi bitene kadar turlar hâlinde döner: plan → adımlar → kontrol → kalanı yeniden planla
+  max_rounds: 3              # hedef başına en fazla plan turu
+  goal_time_budget_min: 720  # bu süreden sonra yeni adım/tur başlamaz
+  verify_goal: true          # adımlar geçince güçlü model hedefi diff'e bakarak kontrol eder
 
 plan:                        # her konuda plan hedefleri: ToT dalları + tartışma + hakem + son düzenleme
   branches: 3                # planlayıcı sayısı: Pragmatik, Kapsamlı, Risk-öncelikli, (Yaratıcı)

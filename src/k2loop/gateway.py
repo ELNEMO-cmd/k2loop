@@ -30,7 +30,8 @@ HELP = """**k2agent komutları**
 - `/izle` → çalışan hedefin akışını bu sohbete bağla
 - `/yardim` → bu liste"""
 
-STAGE_ICON = {"research": "🔎", "plan": "🗺️", "repo": "📁", "debate": "🗣️", "judge": "⚖️", "refine": "✍️"}
+STAGE_ICON = {"research": "🔎", "plan": "🗺️", "repo": "📁", "debate": "🗣️", "judge": "⚖️", "refine": "✍️",
+              "verify": "🔍"}
 DECISION_TR = {"test_classification": "hata türü", "branch_pruning": "dal budama", "retry_escalate": "sonraki adım"}
 
 
@@ -120,8 +121,17 @@ class Formatter:
             self.step_started = True
             self.last_phase = ""
             return f"\n#### ⚙️ Adım {ev.get('i')}/{ev.get('n')}: {ev.get('title')}\n\n"
-        icon = {"done": "✅", "human": "🟡", "failed": "❌"}.get(ev.get("state"), "•")
+        icon = {"done": "✅", "human": "🟡", "failed": "❌", "cancelled": "⏹"}.get(ev.get("state"), "•")
         return f"\n{icon} **Adım {ev.get('i')} sonucu:** {str(ev.get('summary', ''))[:400]}\n\n"
+
+    def _round(self, ev: dict) -> str:
+        return f"\n---\n\n## 🔁 Tur {ev.get('round')}/{ev.get('max')}: {ev.get('msg', '')}\n\n"
+
+    def _verify(self, ev: dict) -> str:
+        if ev.get("done"):
+            return f"- 🎯 Hedef tamamlandı: {ev.get('why', '')}\n"
+        s = f"- 🔁 Hedef henüz bitmedi: {ev.get('why', '')}\n"
+        return s + "".join(f"  - eksik: {r}\n" for r in ev.get("remaining") or [])
 
     def _task_start(self, ev: dict) -> str:
         return "" if self.step_started else f"\n#### ⚙️ Görev: {ev.get('title')}\n\n"

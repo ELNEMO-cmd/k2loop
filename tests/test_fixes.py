@@ -134,3 +134,75 @@ def test_secrets_quotes_stripped(tmp_path):
     (tmp_path / "secrets.env").write_text('LDR_USER="ali"\nLDR_PASSWORD=\'p w\'\n')
     cfg = load_config(tmp_path / "c.yaml")
     assert cfg["research"]["ldr_user"] == "ali" and cfg["research"]["ldr_password"] == "p w"
+
+
+# ---------------------------------------------------------------- goal loop (rounds until done)
+def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=3):
+    """step_results: per round, the statuses of that round's steps; verdicts: answers of the goal check."""
+    import json
+
+    import yaml
+
+    from k2loop.engine import Result
+    cfg = _cfg(tmp_path)
+    cfg["agent"].update(research_first=False, max_rounds=max_rounds)
+    monkeypatch.setattr("k2loop.agent.load_config", lambda: cfg)
+    repo = _repo(tmp_path, "exit 0\n")
+    ag = Agent(cfg)
+    goals_seen: list[str] = []
+    rounds = iter(step_results)
+
+    def fake_plan(cfg, goal, root, log=print, research=""):
+        goals_seen.append(goal)
+        statuses = next(rounds)
+        p = tmp_path / f"plan{len(goals_seen)}.yaml"
+        p.write_text(yaml.safe_dump({"name": "p", "stages": [{"name": "s", "steps": [
+            {"title": f"r{len(goals_seen)}-step{i}", "description": "d", "role": "backend", "_st": st}
+            for i, st in enumerate(statuses)]}]}))
+        return p
+
+    class FakeEngine:
+        def __init__(self, cfg, task, root, run_id, **kw):
+            self.title = kw["title"]
+
+        def run(self):
+            plan = yaml.safe_load((tmp_path / f"plan{len(goals_seen)}.yaml").read_text())
+            st = next(s["_st"] for s in plan["stages"][0]["steps"] if s["title"] == self.title)
+            return Result(st, f"summary of {self.title}")
+
+    answers = iter(verdicts)
+    monkeypatch.setattr("k2loop.planner.make_plan", fake_plan)
+    monkeypatch.setattr("k2loop.planner.summarize", lambda p: "plan")
+    monkeypatch.setattr("k2loop.engine.Engine", FakeEngine)
+    monkeypatch.setattr(ag, "_model_call", lambda profile, prompt, **kw: json.dumps(next(answers)))
+    g = ag.submit(f"{repo} içine özellik ekle")
+    ag.q.next(0.1)
+    status, text = ag.code_goal(g, {"kind": "code", "project": str(repo), "topic": "x"})
+    return status, text, goals_seen
+
+
+def test_goal_loop_replans_after_failed_step(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done", "human", "done"], ["done"]],
+                                      [{"done": True, "remaining": [], "why": "hepsi var"}])
+    assert status == "done" and "Hedef tamamlandı" in text and len(goals) == 2
+    assert "r1-step0" in goals[1] and "FAILED ATTEMPTS" in goals[1] and "r1-step1" in goals[1]
+    assert "⏸ r1-step2" in text  # skipped after the failure, re-planned in round 2
+
+
+def test_goal_loop_continues_when_verifier_finds_missing_work(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"], ["done"]], [
+        {"done": False, "remaining": ["CLI flag --out yok"], "why": "eksik"},
+        {"done": True, "remaining": [], "why": "tamam"}])
+    assert status == "done" and len(goals) == 2
+    assert "STILL MISSING" in goals[1] and "--out" in goals[1]
+
+
+def test_goal_loop_stops_when_no_progress(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["human"], ["failed"], ["done"]], [])
+    assert status == "failed" and len(goals) == 2 and "iki tur" in text
+
+
+def test_goal_loop_round_limit(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"], ["done"]],
+                                      [{"done": False, "remaining": ["a"], "why": ""}] * 2, max_rounds=2)
+    assert status == "failed" and "tur sınırı (2)" in text and "Eksik kalanlar" in text

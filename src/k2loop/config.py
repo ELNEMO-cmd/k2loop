@@ -53,7 +53,10 @@ DEFAULTS: dict[str, Any] = {
         "project": "",               # default git repo for code goals (a message can name another path)
         "research_first": True,      # look for existing work on the internet before planning
         "research_iterations": 2,
-        "stop_on_failed_step": True,
+        # a code goal runs in rounds until it is really done: plan → steps → verify → re-plan what is left
+        "max_rounds": 3,             # planning rounds per goal
+        "goal_time_budget_min": 720, # no new step/round starts after this
+        "verify_goal": True,         # when all steps pass, the strong model checks the goal against the diff
     },
     "plan": {  # plan goals on any topic: ToT branches + multi-agent debate + judge + refine
         "branches": 3,             # how many planners (Pragmatik, Kapsamlı, Risk-öncelikli, Yaratıcı)

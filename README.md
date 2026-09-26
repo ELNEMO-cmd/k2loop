@@ -93,6 +93,11 @@ Bir kod hedefi şöyle ilerler:
    en küçük diff; hiçbiri geçmezse hata sınıflandırılır (Laya #1) → 3 fix hipotezi → yardımcı model puanlar → 2'si seçilir
    (Laya #2) → denenir; seviyeler arasında devam/eskale/insana sor (Laya #3); gerekirse Qwen eskalasyonu.
 4. **Review:** 3 oy + Qwen son kontrol. Kazanan diff `k2loop/<tarih>-<hedef>` dalına commit'lenir. Ana dalına sen alırsın.
+5. **Döngü — hedef bitene kadar:** bir adım geçemezse hedef durmaz; o tur biter ve kalan iş, neyin neden
+   başarısız olduğu bilgisiyle **yeniden planlanır** (farklı yaklaşım, daha küçük adımlar). Bütün adımlar geçince güçlü
+   model hedefi gerçek diff'le karşılaştırır; eksik varsa onlar bir sonraki turun planına girer. Durma koşulları: hedef
+   tamam · `/iptal` · `agent.max_rounds` (varsayılan 3) · `agent.goal_time_budget_min` (720 dk) · iki tur üst üste hiç
+   ilerleme olmaması.
 
 Ajan projede commit'lenmemiş değişiklik varsa başlamaz; `.k2loop/check.sh` yoksa üretir. **`.k2loop/check.sh`
 sistemin hakemidir** — istediğin gibi düzenle ve commit'le.

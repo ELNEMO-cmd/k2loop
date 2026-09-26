@@ -108,6 +108,24 @@ FIX THESE WEAKNESSES: {weak}
 Structure: ## Özet (3-4 sentences), ## Adımlar (numbered; each with done-criterion and rough time/cost),
 ## Zaman çizelgesi, ## Riskler ve önlemler, ## İlk 3 gün ne yapmalı, ## Kaynaklar (only if research was used)."""
 
+VERIFY_PROMPT = """You check whether a coding goal is REALLY finished. The steps below were implemented and their
+checks (tests/lint) pass. Compare the goal with the actual changes.
+
+GOAL:
+{goal}
+
+COMPLETED STEPS:
+{done}
+
+CHANGED FILES:
+{stat}
+
+DIFF (may be truncated):
+{diff}
+
+Is every part of the goal implemented (including tests the goal asks for)? Ignore style. List only concrete missing
+work. Answer ONLY JSON: {{"done": true|false, "remaining": ["missing piece", "..."], "why": "one sentence"}}"""
+
 _PATH_RE = re.compile(r"(~?/[\w.\-/]+)")
 
 
@@ -482,19 +500,88 @@ class Agent:
             gitops.commit_staged(root, "k2loop: ignore run artefacts")
         return br, cur
 
-    def code_goal(self, g: Goal, intent: dict) -> tuple[str, str]:
+    def _run_steps(self, g: Goal, root: Path, plan_path: Path, rnd: int, types: list[str]) -> list[tuple]:
+        """Run one plan's steps in order; stops at the first step that does not finish (the next round re-plans).
+        Returns [(title, status, summary, description)]."""
         from .engine import Engine
+        plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+        steps = [sp for st in plan["stages"] for sp in st["steps"]]
+        results: list[tuple] = []
+        for i, sp in enumerate(steps, 1):
+            if self.q.cancel_requested or time.time() > self._goal_deadline:
+                break
+            self.emit("step", i=i, n=len(steps), title=sp["title"], state="started", round=rnd)
+            task = f"{sp['title']}\n\n{sp.get('description', '')}"
+            if sp.get("files"):
+                task += "\n\nFiles: " + ", ".join(sp["files"])
+            run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{g.id}-r{rnd}s{i}"
+            res = Engine(self.cfg, task, root, run_id, hb=_CancelHB(self.q),
+                         log=lambda m: None, hint_files=[f for f in sp.get("files", []) if (root / f).exists()],
+                         project_types=types, title=sp["title"], emit=self.ev.emit).run()
+            results.append((sp["title"], res.status, res.summary, sp.get("description", "")))
+            self.emit("step", i=i, n=len(steps), title=sp["title"], state=res.status, summary=res.summary[:600],
+                      sha=res.sha, patch=res.patch_path, round=rnd)
+            if res.status != "done":
+                break
+        results += [(sp["title"], "skipped", "", sp.get("description", "")) for sp in steps[len(results):]]
+        return results
+
+    def _verify_goal(self, g: Goal, root: Path, base_sha: str, done_titles: list[str]) -> dict:
+        """Ask the strong model whether the committed work really reaches the goal.
+        Returns {"done": bool, "remaining": [...], "why": str}; unusable answers count as done (no endless loop)."""
+        from .llm import extract_json
+        stat = gitops.git(["diff", "--stat", f"{base_sha}..HEAD"], root, check=False)
+        diff = gitops.git(["diff", f"{base_sha}..HEAD", "--", ".", ":(exclude).k2loop"], root, check=False)
+        self.emit("stage", name="verify", msg="Hedef gerçekten tamamlandı mı? (güçlü model kontrol ediyor)")
+        try:
+            out = self._model_call("strong", VERIFY_PROMPT.format(
+                goal=g.text, done="\n".join(f"- {t}" for t in done_titles) or "-", stat=stat[:4000],
+                diff=diff[:30000]), temperature=0.2)
+            v = extract_json(out)
+        except Exception as exc:  # noqa: BLE001
+            self.emit("log", text=f"hedef kontrolü çalışmadı ({exc}); tamamlandı sayılıyor")
+            return {"done": True, "remaining": [], "why": "kontrol yapılamadı"}
+        if not isinstance(v, dict) or not isinstance(v.get("done"), bool):
+            return {"done": True, "remaining": [], "why": "kontrol cevabı okunamadı"}
+        rem = v.get("remaining")
+        rem = [str(x) for x in rem if x] if isinstance(rem, list) else []
+        done = v["done"] or not rem
+        return {"done": done, "remaining": [] if done else rem[:8], "why": str(v.get("why", ""))[:600]}
+
+    @staticmethod
+    def _next_round_goal(goal: str, history: list[tuple], remaining: list[str]) -> str:
+        """Goal text for re-planning: what is already committed, what failed and why, what is still missing."""
+        done = [t for t, s, *_ in history if s == "done"]
+        failed = [(t, summ, desc) for t, s, summ, desc in history if s not in ("done", "skipped")]
+        out = [goal, "", "PROGRESS SO FAR (already implemented and committed on this branch; do NOT redo it):"]
+        out += [f"- {t}" for t in done] or ["- nothing yet"]
+        if failed:
+            out += ["", "FAILED ATTEMPTS (these steps did not pass the checks; do not repeat the same approach — use "
+                        "smaller steps, a different order or a different design):"]
+            out += [f"- {t}: {desc[:400]}\n  result: {summ[:600]}" for t, summ, desc in failed[-4:]]
+        if remaining:
+            out += ["", "STILL MISSING according to the reviewer:"] + [f"- {r}" for r in remaining]
+        out += ["", "Plan ONLY the remaining work."]
+        return "\n".join(out)
+
+    def code_goal(self, g: Goal, intent: dict) -> tuple[str, str]:
+        """Rounds until the goal is really done: plan → run steps → (all passed? verify with the strong model)
+        → re-plan the rest with what failed / what is missing → ... Stops on done, /iptal, round or time limit,
+        or when rounds stop making progress."""
         from .planner import make_plan, summarize
         from .project import detect
         if not intent.get("project"):
             return "failed", ("Hangi projede çalışayım? Mesajına projenin yolunu yaz (ör. `~/projem`) ya da "
                               "`~/.config/k2loop/config.yaml` içinde `agent.project` ayarla.")
+        ac = self.cfg["agent"]
         root = Path(intent["project"])
         br, base_branch = self._prepare_repo(root, g)
+        base_sha = gitops.git(["rev-parse", "HEAD"], root).strip()
         self.emit("stage", name="repo", msg=f"Proje: {root}  ·  dal: {br}")
+        self._goal_deadline = time.time() + float(ac.get("goal_time_budget_min", 720)) * 60
 
         research = ""
-        if self.cfg["agent"].get("research_first", True):
+        if ac.get("research_first", True):
             self.emit("stage", name="research", msg="Önce internette hazır çözüm aranıyor")
             res = self._researcher().run(PRIOR_ART_QUERY.format(topic=intent.get("topic") or g.text))
             research = self._format_report(res)
@@ -507,40 +594,71 @@ class Agent:
         if self.q.cancel_requested:
             return "cancelled", "İptal edildi (araştırmadan sonra)."
 
-        self.emit("stage", name="plan", msg="Plan: 3 alternatif (hazırı kullan / uyarla / sıfırdan) + hakem")
-        plan_path = make_plan(self.cfg, g.text, root, log=lambda m: self.emit("log", text=str(m)), research=research)
-        self.emit("plan", text=summarize(plan_path), path=str(plan_path))
-        plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
-
-        steps = [(st["name"], sp) for st in plan["stages"] for sp in st["steps"]]
-        results = []
         types = detect(root)["types"]
-        for i, (stage, sp) in enumerate(steps, 1):
+        max_rounds = max(1, int(ac.get("max_rounds", 3)))
+        history: list[tuple] = []        # every step of every round: (title, status, summary, description)
+        remaining: list[str] = []
+        verdict = ""
+        finished, stalled, stop_note = False, 0, ""
+        for rnd in range(1, max_rounds + 1):
             if self.q.cancel_requested:
-                results.append((sp["title"], "cancelled", ""))
+                stop_note = "iptal edildi"
                 break
-            self.emit("step", i=i, n=len(steps), title=sp["title"], state="started")
-            task = f"{sp['title']}\n\n{sp.get('description', '')}"
-            if sp.get("files"):
-                task += "\n\nFiles: " + ", ".join(sp["files"])
-            run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{g.id}-s{i}"
-            res = Engine(self.cfg, task, root, run_id, hb=_CancelHB(self.q),
-                         log=lambda m: None, hint_files=[f for f in sp.get("files", []) if (root / f).exists()],
-                         project_types=types, title=sp["title"], emit=self.ev.emit).run()
-            results.append((sp["title"], res.status, res.summary))
-            self.emit("step", i=i, n=len(steps), title=sp["title"], state=res.status, summary=res.summary[:600],
-                      sha=res.sha, patch=res.patch_path)
-            if res.status != "done" and self.cfg["agent"].get("stop_on_failed_step", True):
+            if time.time() > self._goal_deadline:
+                stop_note = "hedefin süre bütçesi doldu"
                 break
+            self.emit("round", round=rnd, max=max_rounds,
+                      msg="İlk plan" if rnd == 1 else "Kalan iş yeniden planlanıyor")
+            goal_text = g.text if rnd == 1 else self._next_round_goal(g.text, history, remaining)
+            self.emit("stage", name="plan", msg="Plan: 3 alternatif (hazırı kullan / uyarla / sıfırdan) + hakem"
+                      if rnd == 1 else f"Tur {rnd}: kalan iş için yeni plan")
+            try:
+                plan_path = make_plan(self.cfg, goal_text, root, log=lambda m: self.emit("log", text=str(m)),
+                                      research=research)
+            except (Exception, SystemExit) as exc:  # noqa: BLE001
+                if rnd == 1:
+                    raise
+                stop_note = f"yeni plan yapılamadı: {exc}"
+                break
+            self.emit("plan", text=summarize(plan_path), path=str(plan_path))
 
-        done = sum(1 for _, s, _ in results if s == "done")
-        icon = {"done": "✅", "human": "🟡", "failed": "❌", "cancelled": "⏹"}
-        lines = [f"**{done}/{len(steps)} adım tamamlandı** — dal `{br}` ({root})", ""]
-        lines += [f"{icon.get(s, '•')} {t}" for t, s, _ in results]
-        if len(results) < len(steps):
-            lines += [f"⏸ {sp['title']} (çalıştırılmadı)" for _, sp in steps[len(results):]]
+            results = self._run_steps(g, root, plan_path, rnd, types)
+            history += results
+            ok = sum(1 for _, s, *_ in results if s == "done")
+            stalled = 0 if ok else stalled + 1
+            if self.q.cancel_requested:
+                stop_note = "iptal edildi"
+                break
+            if ok == len(results):
+                if not ac.get("verify_goal", True):
+                    finished = True
+                    break
+                v = self._verify_goal(g, root, base_sha, [t for t, s, *_ in history if s == "done"])
+                verdict = v["why"]
+                self.emit("verify", done=v["done"], remaining=v["remaining"], why=v["why"])
+                if v["done"]:
+                    finished = True
+                    break
+                remaining = v["remaining"]
+            else:
+                remaining = []
+            if stalled >= 2:
+                stop_note = "iki tur üst üste hiçbir adım geçmedi"
+                break
+        else:
+            stop_note = stop_note or f"tur sınırı ({max_rounds}) doldu"
+
+        icon = {"done": "✅", "human": "🟡", "failed": "❌", "cancelled": "⏹", "skipped": "⏸"}
+        done_n = sum(1 for _, s, *_ in history if s == "done")
+        head = ("**Hedef tamamlandı**" if finished else f"**Hedef tamamlanmadı** ({stop_note})")
+        lines = [f"{head} — {done_n} adım commit'lendi · dal `{br}` ({root})", ""]
+        lines += [f"{icon.get(s, '•')} {t}" for t, s, *_ in history]
+        if verdict:
+            lines += ["", f"Kontrol: {verdict}"]
+        if remaining and not finished:
+            lines += ["", "Eksik kalanlar:"] + [f"- {r}" for r in remaining]
         lines += ["", f"İncelemek için: `cd {root} && git log --oneline {br}`"]
         if base_branch != br:
             lines.append(f"Beğenirsen: `git switch {base_branch} && git merge {br}`")
-        status = "done" if done == len(steps) else ("cancelled" if self.q.cancel_requested else "failed")
+        status = "done" if finished else ("cancelled" if self.q.cancel_requested else "failed")
         return status, "\n".join(lines)

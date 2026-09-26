@@ -2,6 +2,14 @@
 
 ## Yayınlanmamış
 
+### Yeni: kod hedefleri hedef bitene kadar döner
+- Önceden bir adım başarısız olunca hedef bitiyordu. Artık **turlar** var: plan → adımlar → kontrol → kalanı yeniden
+  planla. Yeni plan, commit'lenmiş adımları, başarısız denemeleri (ve sonuçlarını) ve eksikleri bilir.
+- Bütün adımlar geçince güçlü model hedefi diff'e bakarak doğrular (`agent.verify_goal`); eksik bulursa yeni tur açılır.
+- Ayarlar: `agent.max_rounds` (3), `agent.goal_time_budget_min` (720), `agent.verify_goal` (true).
+  `agent.stop_on_failed_step` kaldırıldı (başarısız adım artık turu bitirir, hedefi değil).
+- Open WebUI'da her tur `🔁 Tur n/N` başlığıyla, hedef kontrolü `🎯` / `🔁` satırıyla görünür.
+
 ### Düzeltmeler
 - **Ajan döngüsü sessizce ölebiliyordu.** Planlayıcı hata durumunda `SystemExit` fırlatıyordu; ajan bunu yakalamadığı
   için döngü thread'i bitiyor, hedef sonsuza dek `running` kalıyor, yeni hedefler hiç çalışmıyordu. Artık hedef
