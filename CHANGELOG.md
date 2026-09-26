@@ -24,6 +24,13 @@
 - **Test yoksa:** uyarı + ilk adım test altyapısı; k2loop'un ürettiği `check.sh` yeni testleri görünce yenilenir.
 - Open WebUI'da her tur `🔁 Tur n/N` başlığıyla, hedef kontrolü `🎯` / `🔁` satırıyla görünür.
 
+### Yeni: `k2loop bench` — K2 vs 35B, gizli testlerle
+- 8 gerçekçi Python görevi (kolaydan zora), her birinde modelin görmediği gizli testler ve referans çözüm. CI, her
+  görevin anlamlı olduğunu doğrular (başlangıç kodu gizli testlerden kalır, referans çözüm geçer).
+- Deneme = temiz repo + tek Aider çalıştırması (K2 gerçek k2adapter'dan geçer) + gizli testler; ToT motoru bilerek
+  kullanılmaz. Rapor: görev bazında geçme/süre, %95 Wilson aralığı, "fark anlamlı mı". Sonuçlar `model_stats`'a yazılır.
+- Gerçek Aider 0.86 ve sahte bir model sunucusuyla uçtan uca denendi (K2 araç-çağrı biçimi dahil).
+
 ### Düzeltmeler
 - **Ajan döngüsü sessizce ölebiliyordu.** Planlayıcı hata durumunda `SystemExit` fırlatıyordu; ajan bunu yakalamadığı
   için döngü thread'i bitiyor, hedef sonsuza dek `running` kalıyor, yeni hedefler hiç çalışmıyordu. Artık hedef

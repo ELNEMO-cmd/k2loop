@@ -273,6 +273,31 @@ def cmd_strong(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bench(a: argparse.Namespace) -> int:
+    from .bench import report, run_bench
+    from .bench_tasks import TASKS
+    cfg = load_config()
+    alias = {"k2": "llm", "llm": "llm", "35b": "strong", "strong": "strong", "qwen": "strong"}
+    try:
+        profiles = list(dict.fromkeys(alias[m.strip().lower()] for m in a.models.split(",") if m.strip()))
+    except KeyError as exc:
+        raise SystemExit(f"bilinmeyen model {exc}; seçenekler: k2, 35b (ya da llm, strong)")
+    if not shutil.which(cfg["aider"].get("binary", "aider")):
+        raise SystemExit("aider PATH'te yok (install.sh)")
+    names = [t.strip() for t in a.tasks.split(",")] if a.tasks else None
+    n_tasks = len([t for t in TASKS if not names or t.name in names])
+    print(f"Karşılaştırma: {' vs '.join(cfg[p]['model'] for p in profiles)} · {n_tasks} görev × {a.repeats} tekrar "
+          f"= model başına {n_tasks * a.repeats} deneme")
+    print("Her deneme: temiz repo → tek Aider çalıştırması → modelin görmediği gizli testler. Uzun sürer; "
+          "sonuçlar ilerledikçe kaydedilir.\n")
+    atts, out_dir = run_bench(cfg, profiles, a.repeats, names, a.timeout_min, record=not a.no_record, keep=a.keep)
+    print("\n" + (report(atts) if atts else "Hiç deneme yapılamadı."))
+    print(f"\nAyrıntılar: {out_dir}  (attempts.json, report.txt" + (", work/ repoları)" if a.keep else ")"))
+    if not a.no_record and atts:
+        print("Sonuçlar model istatistiklerine eklendi: kodu yazan model artık bunlara göre seçilir (k2loop model-stats).")
+    return 0
+
+
 def cmd_model_stats(a: argparse.Namespace) -> int:
     from .modelstats import choose_coder, format_table
     cfg = load_config()
@@ -618,6 +643,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("strong", help="güçlü modeli göster/seç: moe (Qwen3.6-35B-A3B, hızlı) | dense (Qwen3.8 27B)")
     p.add_argument("kind", nargs="?", choices=list(STRONG_MODELS))
     p.set_defaults(fn=cmd_strong)
+    p = sub.add_parser("bench", help="K2 ile 35B'yi aynı kodlama görevlerinde gizli testlerle karşılaştır")
+    p.add_argument("--models", default="k2,35b", help="virgülle: k2, 35b (varsayılan: k2,35b)")
+    p.add_argument("--repeats", type=int, default=3, help="her görev kaç kez denensin (varsayılan 3)")
+    p.add_argument("--tasks", default="", help="sadece bu görevler (virgülle), ör. lru_cache,roman")
+    p.add_argument("--timeout-min", type=float, default=None, help="deneme başına Aider süresi (varsayılan tot.aider_timeout_min)")
+    p.add_argument("--no-record", action="store_true", help="sonuçları model istatistiklerine yazma")
+    p.add_argument("--keep", action="store_true", help="deneme repolarını silme (incelemek için)")
+    p.set_defaults(fn=cmd_bench)
     p = sub.add_parser("model-stats", help="kod yazan modellerin ölçülen başarısı (hangisi gerçekten iyi?)")
     p.set_defaults(fn=cmd_model_stats)
     p = sub.add_parser("collect", help="Bernstein'ın merge edemediği k2loop commit'lerini çalışma dalına al")

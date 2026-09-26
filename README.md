@@ -114,6 +114,20 @@ testleri geçti mi, süre) ve `tot.codegen_profile: auto` iken kodu **ölçülen
 küçükse takılandan **farklı** olan denenir (farklı model farklı hata yapar). Sonuçları görmek için:
 `k2loop model-stats`. Model başına `tot.coder_min_samples` (20) aday birikene kadar varsayılan K2'dir.
 
+**K2 mi 35B mi? Test et:** `k2loop bench` iki modeli aynı 8 kodlama görevinde (kolay → zor: CSV istatistiği, CLI
+bayrakları, tarih hatası, LRU cache, deep merge, çok dosyalı yeniden adlandırma, word wrap, roma rakamları)
+karşılaştırır. Her deneme temiz bir repoda tek Aider çalıştırmasıdır; sonucu **modelin görmediği gizli testler** belirler
+(ToT motoru bilerek kullanılmaz: takılınca güçlü modele devrettiği için sonuçları karıştırırdı). Önce bir modelin bütün
+denemeleri, sonra diğerininki çalışır (tek GPU takası). Rapor görev görev geçme oranı, süre ve %95 güven aralığı verir;
+aralıklar örtüşüyorsa "fark net değil" der. Sonuçlar `model-stats`'a da yazılır, otomatik seçim hemen gerçek veriyle
+başlar.
+
+```bash
+k2loop bench                      # k2 vs 35b, 8 görev × 3 tekrar = model başına 24 deneme (saatler sürer, gece çalıştır)
+k2loop bench --repeats 5          # daha net sonuç
+k2loop bench --tasks lru_cache,roman --repeats 2 --keep   # hızlı deneme, repoları incelemek için sakla
+```
+
 Ajan projede commit'lenmemiş değişiklik varsa başlamaz; `.k2loop/check.sh` yoksa üretir. **`.k2loop/check.sh`
 sistemin hakemidir** — istediğin gibi düzenle ve commit'le.
 
