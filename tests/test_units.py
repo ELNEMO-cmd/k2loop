@@ -9,7 +9,12 @@ from k2loop.bernstein_io import clean_task_text, parse_prompt, parse_task_ids
 from k2loop.claude import parse_claude_json
 from k2loop.cli import bernstein_yaml
 from k2loop.config import DEFAULTS
-from k2loop.decisions import Decider, classify_test_rule, compact_state, retry_escalate_rule
+from k2loop.decisions import (
+    Decider,
+    classify_test_rule,
+    compact_state,
+    retry_escalate_rule,
+)
 from k2loop.llm import extract_json, strip_reasoning
 from k2loop.planner import to_bernstein_yaml, validate_plan
 from k2loop.project import detect, render_check_sh
@@ -336,6 +341,7 @@ def test_repo_context_and_local_config(tmp_path):
 
 def test_local_plan_prompt_survives_braces(tmp_path, monkeypatch):
     import contextlib
+
     from k2loop import planner
     repo = tmp_path / "r"
     repo.mkdir()
@@ -359,6 +365,7 @@ def test_local_plan_prompt_survives_braces(tmp_path, monkeypatch):
     monkeypatch.setattr("k2loop.llm.LLM", FakeLLM)
     monkeypatch.setattr("k2loop.swap.strong_model", lambda cfg, log=print: contextlib.nullcontext(True))
     import copy
+
     from k2loop.config import DEFAULTS
     cfg = copy.deepcopy(DEFAULTS)
     cfg["strong"]["plan_samples"] = 2
@@ -391,6 +398,7 @@ def test_read_files_and_grep_are_safe_and_bounded(tmp_path):
 
 def test_explore_two_rounds(tmp_path):
     import copy
+
     from k2loop.config import DEFAULTS
     from k2loop.planner import explore
     repo = _mini_repo(tmp_path)
@@ -414,6 +422,7 @@ def test_explore_two_rounds(tmp_path):
 
 def test_input_budget_scales_with_context():
     import copy
+
     from k2loop.config import DEFAULTS
     from k2loop.planner import input_budget_chars
     cfg = copy.deepcopy(DEFAULTS)

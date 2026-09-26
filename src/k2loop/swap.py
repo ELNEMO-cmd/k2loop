@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import time
 import urllib.request
-from pathlib import Path
 from typing import Iterator
 
 from .config import data_dir
