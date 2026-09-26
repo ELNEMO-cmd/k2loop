@@ -3,6 +3,8 @@ name = "k2loop"
 version = "0.2.0"
 description = "Local continuous agent: K2 Horizon 7B + Laya + Qwen, Tree-of-Thoughts / Self-Consistency, research-first"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["pyyaml>=6.0"]
 
 [project.optional-dependencies]
@@ -13,7 +15,7 @@ k2loop = "k2loop.cli:main"
 generic-cli = "k2loop.worker:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # SPDX 'license' string (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

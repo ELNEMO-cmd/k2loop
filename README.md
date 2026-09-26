@@ -155,3 +155,10 @@ taraması); `--apply` her karar için kuralı en çok geçeni devreye alır (en 
 - K2 için llama.cpp'nin MBZUAI-IFM fork'u kullanılır. Bernstein beta yazılımdır (3.20.0'a sabit).
 
 Kaldırma: `./uninstall.sh`
+
+## Lisans
+
+k2loop'un kendi kodu [MIT](LICENSE) lisanslıdır. `install.sh`'ın indirip kurduğu araçlar ve modeller depoda yer
+almaz ve kendi lisanslarıyla gelir: ör. Aider, Open WebUI, llama.cpp, llama-swap, SearXNG, Local Deep Research
+(açık kaynak lisanslar), Arize Phoenix (Elastic License 2.0), model ağırlıkları (her modelin kendi lisansı,
+ör. K2 Horizon, Qwen). Yeniden dağıtım yapacaksan bunlara ayrıca bak.
