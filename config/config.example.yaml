@@ -1,0 +1,113 @@
+# k2loop ayarları  (~/.config/k2loop/config.yaml)
+# Her görev bu dosyayı yeniden okur; değişiklik için servis yeniden başlatmaya gerek yok.
+# Şifreler/anahtarlar burada DEĞİL: ~/.config/k2loop/secrets.env (LDR_USER, LDR_PASSWORD, AGENT_API_KEY)
+
+mode: local                  # local  = her şey bu PC'de (Qwen3.8 27B planlar/eskale eder/review eder)
+                             # hybrid = Claude Code (install.sh --hybrid ile kurulur)
+
+models:                      # tüm yerel modeller llama-swap arkasında: tek adres, modele göre otomatik yükleme
+  manager: llama-swap        # modeller: ~/.config/k2loop/llama-swap.yaml · arayüz: http://127.0.0.1:8080/ui
+  swap_url: http://127.0.0.1:8080
+
+llm:                         # K2 Horizon 7B — GPU, kod adayları
+  model: k2-horizon-7b
+  temperature: 1.0           # model kartının önerisi
+  top_p: 0.95
+  max_tokens: 32768          # context küçükse otomatik olarak context/2'ye düşürülür
+  request_timeout_s: 1800
+  reasoning_effort:          # high | medium | low
+    codegen: high
+    debug: high
+    review: medium
+    scoring: low
+
+helper:                      # Qwen3 4B — CPU, K2 ile aynı anda açık (GPU'yu kullanmaz)
+  model: helper
+  temperature: 0.7
+  max_tokens: 4096
+
+roles:                       # yan işleri hangi model yapsın: llm (K2, GPU) | helper (CPU)
+  scoring: helper            # ToT fix hipotezlerini puanlama
+  review: llm                # 3'lü review oyu
+  agent: helper              # hedefin türünü anlama (araştırma mı kod mu)
+
+strong:                      # Qwen3.8 27B Q4_K_M — GPU+RAM, gerektiğinde K2'nin yerine yüklenir
+  model: qwen3.8-27b
+  temperature: 0.7
+  top_p: 0.95
+  max_tokens: 24576
+  template_kwargs: {enable_thinking: true}
+  plan_samples: 3            # ToT: 3 ayrı plan + hakem
+  max_escalations_per_task: 1
+  final_review: per_task     # per_task | off
+  task_time_budget_min: 200
+  repo_context_chars: 24000  # planlayıcının repo özeti
+  read_files: true           # plan öncesi keşif (Qwen okumak istediği dosyaları seçer)
+  read_rounds: 2
+  read_files_max: 12
+  read_file_chars: 8000
+
+tot:                         # Tree of Thoughts / Self-Consistency bütçesi (Dengeli)
+  candidates: 3              # kod üretiminde aday sayısı
+  debug_depth: 2             # hata ayıklama ağacı derinliği
+  debug_branches: 3          # her seviyede fix hipotezi
+  keep_branches: 2           # budamadan sonra denenen dal
+  explore_rate: 0.15         # Laya'ya tarafsız etiket için ara sıra tüm dalları dene
+  review_votes: 3
+  task_time_budget_min: 80
+  aider_timeout_min: 25
+  check_timeout_min: 15
+  overlap_checks: true       # K2 sonraki adayı yazarken öncekinin testleri CPU'da koşar
+
+agent:                       # `k2loop serve` (systemd: k2-agent) — Open WebUI'da model adı: k2agent
+  port: 8090
+  project: ""                # mesajda proje yolu yoksa kullanılacak repo, ör. ~/projem
+  research_first: true       # kodlamadan önce internette hazır çözüm ara
+  research_iterations: 2
+  stop_on_failed_step: true
+
+plan:                        # her konuda plan hedefleri: ToT dalları + tartışma + hakem + son düzenleme
+  branches: 3                # planlayıcı sayısı: Pragmatik, Kapsamlı, Risk-öncelikli, (Yaratıcı)
+  debate_rounds: 1           # planlayıcıların birbirini okuyup eleştirdiği ve planını düzelttiği tur sayısı
+  branch_model: strong       # strong (MoE: hızlı, iyi Türkçe) | llm (K2: Türkçesi zayıf) | helper (CPU)
+  judge_model: strong        # hakem ve son düzenleme
+  language: Turkish
+
+research:
+  ldr_url: http://127.0.0.1:5000        # Local Deep Research (hesap bilgisi secrets.env'de)
+  searxng_url: http://127.0.0.1:8888    # LDR yoksa doğrudan SearXNG
+  timeout_min: 25
+
+trace:                       # Phoenix: http://127.0.0.1:6006
+  enabled: true
+  endpoint: http://127.0.0.1:6006/v1/traces
+
+laya:                        # Karar modeli (CPU'da servis)
+  enabled: true
+  url: http://127.0.0.1:8765
+  mode:                      # shadow = kural verir · active = Laya verir · semif = SemIf verir
+    test_classification: shadow
+    branch_pruning: shadow
+    retry_escalate: shadow
+  thresholds:
+    test_classification: 0.70
+    branch_pruning: 0.60
+    retry_escalate: 0.75
+  state_max_chars: 1800
+
+semif:                       # SemIf yöntemi: yardımcı modelden tek geçişte seçenek olasılıkları (Laya'nın rakibi)
+  enabled: true              # her kararda Laya'nın yanında gölge tahmin olarak loglanır
+  model_profile: helper      # CPU'daki yardımcı model
+  thresholds:                # laya.mode.<karar>: semif iken, güven bu eşiğin altındaysa kurala düşer
+    test_classification: 0.70
+    branch_pruning: 0.60
+    retry_escalate: 0.75
+
+aider:
+  binary: aider
+  edit_format: diff          # küçük dosyalı projelerde 'whole' daha sağlam olabilir
+  map_tokens: 2048
+  extra_args: []
+
+paths:
+  data_dir: ~/.local/share/k2loop

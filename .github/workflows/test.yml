@@ -1,0 +1,26 @@
+name: test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: pip install -e ".[trace]" pytest
+      - name: unit tests
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          pytest -q
+      - name: shell scripts (syntax + shellcheck errors)
+        run: |
+          for f in install.sh uninstall.sh scripts/*.sh; do bash -n "$f"; done
+          shellcheck -S error install.sh uninstall.sh scripts/*.sh
+      - name: package imports and CLI
+        run: |
+          python -c "import k2loop.agent, k2loop.gateway, k2loop.research, k2loop.trace, k2loop.engine"
+          k2loop --help
