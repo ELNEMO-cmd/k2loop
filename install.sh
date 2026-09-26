@@ -2,13 +2,14 @@
 # ============================================================================
 #  k2loop 0.2 kurulum — Zorin OS 17/18 (Ubuntu 22.04/24.04 tabanlı), TAMAMEN YEREL
 #
-#  GPU (3080 Ti): K2 Horizon 7B (kod) ⇄ Qwen3.8 27B (plan/eskalasyon/review)   — llama-swap yönetir
+#  GPU (3080 Ti): K2 Horizon 7B (kod) ⇄ güçlü model (plan/eskalasyon/review)   — llama-swap yönetir
+#                 güçlü model: --strong moe (Qwen3.6-35B-A3B, varsayılan) | dense (Qwen3.8 27B)
 #  CPU          : yardımcı model (Qwen3 4B), Laya, testler, Local Deep Research, SearXNG
 #  Arayüzler    : Open WebUI :3000 (canlı ajan) · Phoenix :6006 (ToT iz ağacı)
 #                 llama-swap :8080/ui (modeller) · Local Deep Research :5000 (araştırma)
 #
 #  Kullanım:   ./install.sh               (önerilen)
-#              ./install.sh --no-local    (Qwen3.8 27B'yi kurma)
+#              ./install.sh --no-local    (güçlü modeli kurma)
 #              ./install.sh --no-web      (SearXNG / LDR / Open WebUI kurma)
 #              ./install.sh --hybrid      (Claude Code'u da kur ve hibrit moda geç)
 #              ./install.sh --quant Q5_K_M
@@ -49,10 +50,12 @@ while [ $# -gt 0 ]; do
     --root-part) ROOT_PART=1; shift;;
     --for-user) FOR_USER="$2"; shift 2;;
     --skip-root) SKIP_ROOT=1; shift;;
-    -h|--help) sed -n 2,19p "$0"; exit 0;;
+    -h|--help) sed -n 2,20p "$0"; exit 0;;
     *) echo "Bilinmeyen seçenek: $1"; exit 1;;
   esac
 done
+
+case "$STRONG_KIND" in moe|dense) ;; *) echo "--strong moe|dense olmalı (verilen: $STRONG_KIND)"; exit 1;; esac
 
 exec > >(tee -a "$LOG") 2>&1
 say()  { printf "\n\033[1;36m==> %s\033[0m\n" "$*"; }
@@ -136,7 +139,7 @@ export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNT
 RAM_GB=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) / 1024 / 1024 ))
 FREE_GB=$(( $(df -Pk "$HOME" | awk 'NR==2{print $4}') / 1024 / 1024 ))
 ok "RAM: ${RAM_GB} GB, boş disk: ${FREE_GB} GB, CPU: $(nproc) iş parçacığı"
-[ "$WITH_LOCAL" -eq 1 ] && [ "$RAM_GB" -lt 28 ] && warn "Qwen3.8 27B için ~32 GB RAM önerilir (sizde ${RAM_GB} GB)."
+[ "$WITH_LOCAL" -eq 1 ] && [ "$RAM_GB" -lt 28 ] && warn "Güçlü model için ~32 GB RAM önerilir (sizde ${RAM_GB} GB)."
 [ "$FREE_GB" -lt 55 ] && warn "En az ~55 GB boş disk önerilir (modeller + CUDA + derlemeler + docker imajları)."
 mkdir -p "$DATA/bin" "$DATA/models" "$DATA/models-helper" "$CONF" "$UNITS" "$HOME/.local/bin"
 export PATH="$HOME/.local/bin:/usr/local/cuda/bin:$PATH"
@@ -444,6 +447,11 @@ RestartSec=15
 [Install]
 WantedBy=default.target
 UNIT
+# ayarlar servisler başlamadan yazılır (k2-agent host/port/anahtarı açılışta okur)
+[ -f "$CONF/config.yaml" ] || cp "$HERE/config/config.example.yaml" "$CONF/config.yaml"
+if [ "$HYBRID" -eq 1 ]; then k2loop mode hybrid; else k2loop mode local; fi
+[ "$WITH_LOCAL" -eq 1 ] && k2loop strong "$STRONG_KIND"
+ok "$CONF/config.yaml"
 systemctl --user daemon-reload
 # enable + restart: a re-run must apply new unit files / settings to services that are already running
 start_unit() {
@@ -460,11 +468,7 @@ if [ "$SKIP_ROOT" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------- 10. ayar + kontrol
-say "10/10 Ayar dosyası ve kontrol"
-[ -f "$CONF/config.yaml" ] || cp "$HERE/config/config.example.yaml" "$CONF/config.yaml"
-if [ "$HYBRID" -eq 1 ]; then k2loop mode hybrid; else k2loop mode local; fi
-[ "$WITH_LOCAL" -eq 1 ] && k2loop strong "$STRONG_KIND"
-ok "$CONF/config.yaml"
+say "10/10 Kontrol"
 if [ "$SKIP_LLM" -eq 0 ]; then
   echo "  Modeller yükleniyor; ilk seferde K2 için uygun context ölçülür (en fazla ~10 dk)..."
   for _ in $(seq 1 120); do curl -sf http://127.0.0.1:8080/running 2>/dev/null | grep -q k2-horizon && break; sleep 5; done

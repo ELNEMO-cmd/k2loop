@@ -2,7 +2,7 @@
 # Her görev bu dosyayı yeniden okur; değişiklik için servis yeniden başlatmaya gerek yok.
 # Şifreler/anahtarlar burada DEĞİL: ~/.config/k2loop/secrets.env (LDR_USER, LDR_PASSWORD, AGENT_API_KEY)
 
-mode: local                  # local  = her şey bu PC'de (Qwen3.8 27B planlar/eskale eder/review eder)
+mode: local                  # local  = her şey bu PC'de (güçlü yerel model — strong.model — planlar/eskale eder/review eder)
                              # hybrid = Claude Code (install.sh --hybrid ile kurulur)
 
 models:                      # tüm yerel modeller llama-swap arkasında: tek adres, modele göre otomatik yükleme

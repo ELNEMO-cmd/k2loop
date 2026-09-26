@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -46,19 +48,36 @@ def log_tail(out: str, max_chars: int = 4000) -> str:
     return txt[-max_chars:]
 
 
+def run_group(cmd: list[str], cwd: Path, timeout: float) -> tuple[int, str, str, bool]:
+    """Run cmd in its own process group; on timeout kill the whole group (test servers, pytest workers, npm
+    children), not only the direct child. Returns (returncode, stdout, stderr, timed_out)."""
+    p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, errors="replace", start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return p.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            out, err = p.communicate(timeout=10)
+        except subprocess.TimeoutExpired:  # a grandchild escaped the group and still holds the pipes
+            p.kill()
+            out, err = "", ""
+        return 124, out or "", err or "", True
+
+
 def run_checks(workdir: Path, timeout: float) -> CheckResult:
     script = workdir / ".k2loop" / "check.sh"
     t0 = time.time()
     if not script.exists():
         return CheckResult(True, 0, "K2LOOP_NO_CHECKS (no .k2loop/check.sh)", True, 0, "none", 0.0)
-    try:
-        p = subprocess.run(["bash", str(script)], cwd=workdir, capture_output=True, text=True,
-                           timeout=max(30, timeout))
-        out, rc = (p.stdout + "\n" + p.stderr)[-200_000:], p.returncode
-    except subprocess.TimeoutExpired as exc:
-        partial = (exc.stdout or b"")
-        partial = partial.decode(errors="ignore") if isinstance(partial, bytes) else partial
-        out, rc = f"{partial[-100_000:]}\nTIMEOUT: checks exceeded {int(timeout)}s", 124
+    rc, so, se, timed_out = run_group(["bash", str(script)], workdir, max(30, timeout))
+    out = (so + "\n" + se)[-200_000:]
+    if timed_out:
+        out = f"{out[-100_000:]}\nTIMEOUT: checks exceeded {int(timeout)}s"
     no_checks = "K2LOOP_NO_CHECKS" in out
     passed = rc == 0
     return CheckResult(passed, rc, out, no_checks, 0 if passed else max(1, count_failures(out)),

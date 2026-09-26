@@ -12,7 +12,7 @@ CONFIG_PATH = CONFIG_DIR / "config.yaml"
 OVERRIDES_PATH = CONFIG_DIR / "overrides.yaml"  # written by `k2loop mode`, `laya-eval --apply`, `laya-mode`
 
 DEFAULTS: dict[str, Any] = {
-    "mode": "local",  # local: Qwen3.8 27B plans/escalates/reviews, nothing leaves the PC | hybrid: Claude does it
+    "mode": "local",  # local: the strong local model (strong.model) plans/escalates/reviews, nothing leaves the PC | hybrid: Claude does it
     # All local models sit behind llama-swap (one OpenAI endpoint, loads/unloads by model name).
     # manager: llama-swap | systemd (old per-model services, kept for existing installs)
     "models": {"manager": "llama-swap", "swap_url": "http://127.0.0.1:8080"},
@@ -142,6 +142,9 @@ def load_config(path: str | os.PathLike | None = None) -> dict[str, Any]:
     if secrets.exists():
         for line in secrets.read_text(encoding="utf-8").splitlines():
             k, _, v = line.partition("=")
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":  # KEY="value" / KEY='value'
+                v = v[1:-1]
             if k.strip() == "LDR_USER":
                 cfg["research"]["ldr_user"] = v.strip()
             elif k.strip() == "LDR_PASSWORD":

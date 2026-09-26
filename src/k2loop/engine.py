@@ -42,6 +42,10 @@ CODEGEN_RULES = (
 )
 
 
+def _str_list(v) -> list[str]:
+    return [str(x) for x in v] if isinstance(v, list) else ([str(v)] if v else [])
+
+
 @dataclass
 class Cand:
     name: str
@@ -111,8 +115,11 @@ class Engine:
         self._log(msg)
         self.emit("log", text=msg)
 
+    def cancelled(self) -> bool:
+        return self.hb is not None and bool(getattr(self.hb, "shutdown", False))
+
     def left(self) -> float:
-        if self.hb is not None and getattr(self.hb, "shutdown", False):
+        if self.cancelled():
             return 0.0
         return self.deadline - time.time()
 
@@ -131,6 +138,11 @@ class Engine:
         p = gitops.new_worktree(self.base, self.run_dir / "wt" / name, base_diff)
         self.worktrees.append(p)
         return p
+
+    def _run_checks(self, name: str, d: Path) -> CheckResult:
+        if gitops.restore_protected(d):
+            self.log(f"[k2loop] {name}: .k2loop/check.sh was modified by the model; the original is used")
+        return run_checks(d, self._check_timeout())
 
     def _check_timeout(self) -> float:
         return min(float(self.tot["check_timeout_min"]) * 60, max(60.0, self.left() - 60))
@@ -152,7 +164,7 @@ class Engine:
     def _check(self, name: str, d: Path, ok: bool, out: str, diff: str, parent=None, source: str = "k2") -> Cand:
         """CPU part: run .k2loop/check.sh in the candidate's worktree."""
         with span(f"check:{name}", "EVALUATOR", parent=parent) as sp:
-            chk = run_checks(d, self._check_timeout())
+            chk = self._run_checks(name, d)
             set_attrs(sp, output__value=log_tail(chk.output, 3000), passed=chk.passed, failures=chk.failures)
         (self.run_dir / f"{name}.check.log").write_text(chk.output, encoding="utf-8")
         lines = gitops.diff_lines(diff)
@@ -178,6 +190,9 @@ class Engine:
         pending = None
         try:
             for i in range(n):
+                if self.cancelled():
+                    self.notes.append(f"cancelled after {i} candidates")
+                    break
                 if i > 0 and (self.used_frac() > 0.45 or self.left() < 900):
                     self.notes.append(f"codegen stopped after {i} candidates (time budget)")
                     break
@@ -290,7 +305,7 @@ class Engine:
             if c is not None:
                 for r in esc_recs:
                     self.decider.outcome(r, "retry_escalate", "escalate_claude")  # label = "escalate to strong model"
-                return c, ("qwen27b-local" if self.local else "claude")
+                return c, (f"{self.cfg['strong']['model']}-local" if self.local else "claude")
         for r in esc_recs:
             self.decider.outcome(r, "retry_escalate", "ask_human")
         self._save_patch(cur, "best-failing")
@@ -321,7 +336,7 @@ class Engine:
                 aok, out = run_aider(self.cfg, d, msg, "high", max(600.0, self.left() - 300), self.hint_files,
                                      profile="strong")
         (self.run_dir / "strong_fix.aider.log").write_text(out, encoding="utf-8")
-        c = self._check("strong_fix", d, aok, out, gitops.snapshot_diff(d), source="qwen27b")
+        c = self._check("strong_fix", d, aok, out, gitops.snapshot_diff(d), source=self.cfg["strong"]["model"])
         return c if c.usable and c.chk.passed else None
 
     def escalate(self, cur: Cand) -> Cand | None:
@@ -342,7 +357,7 @@ class Engine:
             self.notes.append("claude escalation failed" + (" (usage limit)" if res.limited else f": {res.error[:200]}"))
             return None
         diff = gitops.snapshot_diff(d)
-        chk = run_checks(d, self._check_timeout())
+        chk = self._run_checks("claude_fix", d)
         c = Cand("claude_fix", d, diff, gitops.diff_lines(diff), chk, source="claude")
         self.log(f"[k2loop] claude_fix: checks={'PASS' if chk.passed else 'FAIL'}")
         return c if c.usable and chk.passed else None
@@ -371,13 +386,16 @@ class Engine:
                       'Answer ONLY JSON: {"verdict":"approve"|"changes","issues":[{"severity":"high"|"low",'
                       '"issue":"..."}]}')
             try:
-                data = self.reviewer.ask_json(prompt, self.eff["review"], max_tokens=8192) or {}
+                data = self.reviewer.ask_json(prompt, self.eff["review"], max_tokens=8192)
             except Exception:  # noqa: BLE001
                 continue
-            v = str(data.get("verdict", "approve")).lower()
+            v = str(data.get("verdict", "")).lower() if isinstance(data, dict) else ""
+            if v not in ("approve", "changes"):  # unparseable answer: not a vote (and never a silent approval)
+                continue
             votes.append(v)
-            if v == "changes":
-                issues += [str(x.get("issue")) for x in data.get("issues", [])
+            found = data.get("issues")
+            if v == "changes" and isinstance(found, list):
+                issues += [str(x.get("issue")) for x in found
                            if isinstance(x, dict) and x.get("severity") == "high" and x.get("issue")]
         self.emit("review", votes=votes, issues=list(dict.fromkeys(issues))[:8])
         if votes and votes.count("changes") * 2 > len(votes):
@@ -397,7 +415,7 @@ class Engine:
             from .llm import extract_json
             data = extract_json(res.text) if res.ok else None
             if isinstance(data, dict) and str(data.get("verdict")).lower() == "reject":
-                win = self._fix_round(win, [str(x) for x in data.get("issues", [])], "claude")
+                win = self._fix_round(win, _str_list(data.get("issues")), "claude")
                 self.notes.append("Claude review: reject -> fix round")
             elif res.ok:
                 self.notes.append("Claude review: approve")
@@ -419,14 +437,17 @@ class Engine:
                 self.notes.append("Qwen review skipped: strong model unavailable")
                 return win
             try:
-                data = LLM(self.cfg, "strong").ask_json(prompt, "high") or {}
+                data = LLM(self.cfg, "strong").ask_json(prompt, "high")
             except Exception as exc:  # noqa: BLE001
                 self.notes.append(f"Qwen review failed: {exc}")
                 return win
         if isinstance(data, dict) and str(data.get("verdict")).lower() == "reject":
             self.notes.append("Qwen review: reject -> fix round")
-            self.emit("review", votes=["qwen: reject"], issues=[str(x) for x in data.get("issues", [])][:8])
-            return self._fix_round(win, [str(x) for x in data.get("issues", [])], "qwen")
+            self.emit("review", votes=["qwen: reject"], issues=_str_list(data.get("issues"))[:8])
+            return self._fix_round(win, _str_list(data.get("issues")), "qwen")
+        if not isinstance(data, dict) or str(data.get("verdict")).lower() != "approve":
+            self.notes.append("Qwen review: no usable answer")
+            return win
         self.notes.append("Qwen review: approve")
         self.emit("review", votes=["qwen: approve"], issues=[])
         return win
@@ -466,7 +487,7 @@ class Engine:
                     self.notes.append("no candidate produced any change")
                     empty = cands[0] if cands else None
                     win = self.escalate(empty) if empty else None
-                    source = "claude" if win else "human"
+                    source = (f"{self.cfg['strong']['model']}-local" if self.local else "claude") if win else "human"
                 else:
                     source = "human"
             if win is None:
@@ -474,6 +495,10 @@ class Engine:
                 return Result("human", "k2loop could not make the checks pass. " + "; ".join(self.notes),
                               patch_path=patch)
             win = self.review(win)
+            if self.cancelled():
+                patch = self._save_patch(win, "cancelled-winner")
+                return Result("human", "cancelled before commit; passing patch saved. " + "; ".join(self.notes),
+                              patch_path=patch)
             self.phase("finish", f"applying {win.name}")
             gitops.apply_diff(self.base, win.diff)          # stages exactly the winner's changes
             files = gitops.commit_staged(self.base, f"k2loop: {self.title}")

@@ -216,7 +216,7 @@ class Gateway:
             except Exception:  # noqa: BLE001
                 yield ""
             return
-        if cmd in ("/yardim", "/yardım", "/help"):
+        if cmd in ("/yardim", "/yardım", "/help") or not cmd:
             yield HELP
             return
         if cmd == "/durum":

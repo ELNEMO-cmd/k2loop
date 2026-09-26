@@ -1,5 +1,24 @@
 # Değişiklikler
 
+## Yayınlanmamış
+
+### Düzeltmeler
+- **Ajan döngüsü sessizce ölebiliyordu.** Planlayıcı hata durumunda `SystemExit` fırlatıyordu; ajan bunu yakalamadığı
+  için döngü thread'i bitiyor, hedef sonsuza dek `running` kalıyor, yeni hedefler hiç çalışmıyordu. Artık hedef
+  `failed` olur, döngü devam eder.
+- **Model `.k2loop/check.sh`'i değiştirip testleri "geçebiliyordu".** Dosya artık aday diff'lerine girmez ve her
+  kontrol, commit'li orijinal `check.sh` ile çalışır.
+- **Model JSON dizi döndürünce çöküş.** Niyet sınıflandırma, review ve planlayıcı artık beklenmeyen JSON biçimlerini
+  tolere eder (önceden testleri geçen bir aday bile review'da çöküp kayboluyordu).
+- **Zaman aşımında yetim süreçler.** `check.sh` ve Aider kendi süreç grubunda çalışır; süre dolunca tüm grup öldürülür.
+- **İptal sonrası commit.** `/iptal` (veya Bernstein SHUTDOWN) gelince yeni aday üretilmez ve kazanan commit'lenmez;
+  patch kaydedilir.
+- **Okunamayan review cevabı onay sayılıyordu.** Artık oy sayılmaz.
+- Küçükler: `.gitignore` satır tekrarı, zaten `k2loop/` dalındayken anlamsız merge önerisi, boş mesajın hedef olması,
+  `secrets.env` tırnakları, yerel modda yanlış kaynak etiketleri ("claude", "qwen27b"), Aider geçmiş dosyalarının
+  sınırsız büyümesi, `install.sh`'in geçersiz `--strong` değerini en sonda fark etmesi ve `k2-agent`'ı ayarlar
+  yazılmadan başlatması, eskimiş "Qwen3.8 27B varsayılan" metinleri.
+
 ## 0.2.0 — 2026-09-26
 
 Tamamen yerel, sürekli çalışan ajan. Gerçek donanımda (RTX 3080 Ti, WSL2 Ubuntu 24.04) uçtan uca test edildi:

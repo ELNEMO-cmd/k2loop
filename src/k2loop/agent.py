@@ -254,6 +254,10 @@ class Agent:
             self.current = g
             try:
                 self.handle(g)
+            except BaseException as exc:  # noqa: BLE001  (the loop must survive anything a goal throws)
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
+                self.q.finish(g, "failed", f"Beklenmeyen hata: {type(exc).__name__}: {exc}")
             finally:
                 self.current = None
                 set_context()
@@ -277,9 +281,11 @@ class Agent:
                     status, result = self.research_goal(g, intent)
                 if self.q.cancel_requested and status != "done":
                     status = "cancelled"
-            except Exception as exc:  # noqa: BLE001
+            except (Exception, SystemExit) as exc:  # noqa: BLE001  (planner raises SystemExit for CLI use)
                 result = f"Beklenmeyen hata: {type(exc).__name__}: {exc}"
-                (data_dir(self.cfg) / "agent" / f"crash-{g.id}.txt").write_text(traceback.format_exc(), encoding="utf-8")
+                crash = data_dir(self.cfg) / "agent" / f"crash-{g.id}.txt"
+                crash.parent.mkdir(parents=True, exist_ok=True)
+                crash.write_text(traceback.format_exc(), encoding="utf-8")
             set_attrs(sp, output__value=result[:8000], status=status)
         self.emit("final", text=result, status=status)
         self.emit("goal", state=status, text=g.text[:500])
@@ -294,6 +300,8 @@ class Agent:
                 INTENT_PROMPT.format(text=text[:4000]), "low", max_tokens=800, temperature=0.2) or {}
         except Exception as exc:  # noqa: BLE001
             self.emit("log", text=f"intent model failed ({exc}); using heuristics")
+        if not isinstance(data, dict):
+            data = {}
         kind = data.get("kind") if data.get("kind") in ("code", "plan", "research") else (
             "code" if path else "plan" if re.search(r"\bplan|yol haritas|strateji|program", text, re.I) else "research")
         proj = path or data.get("project") or ""
@@ -467,8 +475,9 @@ class Agent:
             self.emit("log", text=f"check.sh üretildi ({', '.join(info['types'])})")
         gi = root / ".gitignore"
         lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
-        if ".k2loop/plans/" not in lines:
-            gi.write_text("\n".join(lines + [".k2loop/runs/", ".k2loop/plans/"]) + "\n", encoding="utf-8")
+        missing = [p for p in (".k2loop/runs/", ".k2loop/plans/") if p not in lines]
+        if missing:
+            gi.write_text("\n".join(lines + missing) + "\n", encoding="utf-8")
             gitops.git(["add", ".gitignore"], root)
             gitops.commit_staged(root, "k2loop: ignore run artefacts")
         return br, cur
@@ -530,7 +539,8 @@ class Agent:
         lines += [f"{icon.get(s, '•')} {t}" for t, s, _ in results]
         if len(results) < len(steps):
             lines += [f"⏸ {sp['title']} (çalıştırılmadı)" for _, sp in steps[len(results):]]
-        lines += ["", f"İncelemek için: `cd {root} && git log --oneline {br}`",
-                  f"Beğenirsen: `git switch {base_branch} && git merge {br}`"]
+        lines += ["", f"İncelemek için: `cd {root} && git log --oneline {br}`"]
+        if base_branch != br:
+            lines.append(f"Beğenirsen: `git switch {base_branch} && git merge {br}`")
         status = "done" if done == len(steps) else ("cancelled" if self.q.cancel_requested else "failed")
         return status, "\n".join(lines)

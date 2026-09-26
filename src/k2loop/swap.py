@@ -1,4 +1,5 @@
-"""GPU swap: 12 GB VRAM holds either K2 (small, fast) or Qwen3.8 27B (strong, partially in RAM).
+"""GPU swap (models.manager: systemd only; llama-swap swaps by itself): 12 GB VRAM holds either K2 (small, fast)
+or the strong model (Qwen3.6-35B-A3B MoE / Qwen3.8 27B, partially in RAM).
 `with strong_model(cfg):` stops K2, starts the strong server, yields, then restores K2."""
 from __future__ import annotations
 

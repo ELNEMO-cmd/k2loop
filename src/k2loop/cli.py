@@ -601,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_doctor)
     p = sub.add_parser("status", help="bernstein status")
     p.set_defaults(fn=cmd_status)
-    p = sub.add_parser("mode", help="hybrid (Claude) / local (tamamen yerel, Qwen3.8 27B) modu göster/değiştir")
+    p = sub.add_parser("mode", help="hybrid (Claude) / local (tamamen yerel, güçlü yerel model) modu göster/değiştir")
     p.add_argument("mode", nargs="?", choices=["hybrid", "local"])
     p.set_defaults(fn=cmd_mode)
     p = sub.add_parser("strong", help="güçlü modeli göster/seç: moe (Qwen3.6-35B-A3B, hızlı) | dense (Qwen3.8 27B)")

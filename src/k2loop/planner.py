@@ -46,6 +46,12 @@ def slug(s: str, default: str = "plan") -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.translate(_TR).lower()).strip("-")[:40] or default
 
 
+def _dict_alts(data) -> list[dict]:
+    """The "alternatives" of a model answer, keeping only well-formed ones (models return lists, strings...)."""
+    alts = data.get("alternatives") if isinstance(data, dict) else None
+    return [a for a in alts if isinstance(a, dict) and isinstance(a.get("stages"), list)] if isinstance(alts, list) else []
+
+
 def validate_plan(plan: dict) -> list[str]:
     errs: list[str] = []
     stages = plan.get("stages")
@@ -53,6 +59,9 @@ def validate_plan(plan: dict) -> list[str]:
         return ["plan has no stages"]
     seen: set[str] = set()
     for si, st in enumerate(stages):
+        if not isinstance(st, dict):
+            errs.append(f"stage {si}: not an object")
+            continue
         name = st.get("name")
         if not name or not isinstance(name, str):
             errs.append(f"stage {si}: missing name")
@@ -69,6 +78,9 @@ def validate_plan(plan: dict) -> list[str]:
             continue
         for pi, sp in enumerate(steps):
             where = f"stage {name} step {pi}"
+            if not isinstance(sp, dict):
+                errs.append(f"{where}: not an object")
+                continue
             extra = set(sp) - STEP_KEYS
             if extra:
                 errs.append(f"{where}: unknown keys {sorted(extra)}")
@@ -87,9 +99,13 @@ def validate_plan(plan: dict) -> list[str]:
 
 def normalize(alt: dict, model: str) -> dict:
     stages = []
-    for st in alt.get("stages", []):
+    for st in alt.get("stages") or []:
+        if not isinstance(st, dict):
+            continue
         steps = []
-        for sp in st.get("steps", []):
+        for sp in st.get("steps") or []:
+            if not isinstance(sp, dict):
+                continue
             step = {k: sp[k] for k in ("title", "description", "role", "scope", "complexity", "files") if k in sp}
             step.setdefault("role", "backend")
             if step["role"] not in ROLES:
@@ -308,8 +324,9 @@ def _local_alternatives(cfg: dict, goal: str, root: Path, log, research: str = "
                       + f"\nStrategy for this plan: {hint}\nPut your single plan as the only element of "
                         '"alternatives" and set "chosen_index": 0.')
             data = llm.ask_json(prompt, "high")
-            if isinstance(data, dict) and data.get("alternatives"):
-                alt = data["alternatives"][0]
+            got = _dict_alts(data)
+            if got:
+                alt = got[0]
                 alt.setdefault("name", hint.split(":")[0])
                 alts.append(alt)
         if not alts:
@@ -341,9 +358,9 @@ def make_plan(cfg: dict, goal: str, root: Path, log=print, research: str = "") -
     if not res.ok:
         raise SystemExit(f"Planlama başarısız: {res.error or res.text[:300]}" + (" (kullanım limiti)" if res.limited else ""))
     data = extract_json(res.text)
-    if not isinstance(data, dict) or not data.get("alternatives"):
+    alts = _dict_alts(data)
+    if not alts:
         raise SystemExit("Claude geçerli JSON plan döndürmedi:\n" + res.text[:1500])
-    alts = data["alternatives"]
     idx = data.get("chosen_index", 0)
     idx = idx if isinstance(idx, int) and 0 <= idx < len(alts) else 0
     return _finish_plan(cfg, goal, root, alts, idx, str(data.get("why", "")), log)

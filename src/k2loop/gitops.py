@@ -5,8 +5,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# never let these reach a commit / candidate diff
-EXCLUDE_PATHS = [".sdd", ".k2loop/runs", ".k2loop/plans", "node_modules", ".pio", ".venv", ":(glob)**/.aider*",
+# never let these reach a commit / candidate diff (.k2loop/check.sh: the judge must not be editable by the coder)
+PROTECTED = [".k2loop/check.sh"]
+EXCLUDE_PATHS = [*PROTECTED, ".sdd", ".k2loop/runs", ".k2loop/plans", "node_modules", ".pio", ".venv", ":(glob)**/.aider*",
                  ":(glob)**/__pycache__/**", ".pytest_cache", ".ruff_cache", ".mypy_cache", ":(glob)**/*.pyc"]
 IDENT = ["-c", "user.name=k2loop", "-c", "user.email=k2loop@localhost"]
 
@@ -23,6 +24,16 @@ def stage_all(d: Path) -> None:
     (Exclude-pathspecs on `git add` fail when the path is also gitignored, e.g. .sdd/.)"""
     git(["add", "-A"], d)
     git(["reset", "-q", "--", *EXCLUDE_PATHS], d, check=False)
+
+
+def restore_protected(d: Path) -> bool:
+    """Put the committed .k2loop/check.sh back in a candidate worktree before its checks run.
+    Returns True when the candidate had changed it."""
+    changed = bool(git(["status", "--porcelain", "--", *PROTECTED], d, check=False).strip())
+    if changed:
+        git(["checkout", "HEAD", "--", *PROTECTED], d, check=False)
+        git(["clean", "-fq", "--", *PROTECTED], d, check=False)  # untracked in HEAD: drop the coder's copy
+    return changed
 
 
 def snapshot_diff(d: Path) -> str:
