@@ -113,6 +113,13 @@ class Engine:
         if cp == "auto":
             cp, self.coder_reason = modelstats.choose_coder(cfg, self.project_types)
         self.gen_profile = cp if cp in modelstats.CODERS else "llm"
+        if self.gen_profile != "llm":
+            # the GPU holds one of K2 / strong: hypotheses and review follow the coder instead of swapping back
+            self.llm = LLM(cfg, self.gen_profile)
+            if roles.get("review", "llm") == "llm":
+                self.reviewer = self.llm
+            if roles.get("scoring", "llm") == "llm":
+                self.scorer = self.llm
         self._gen_profiles: dict[str, str] = {}   # candidate name -> profile that wrote it
 
     # ------------------------------------------------------------ helpers

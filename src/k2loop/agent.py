@@ -143,7 +143,12 @@ def _similar(a: str, b: str) -> bool:
     """Same missing item in other words? (verifiers rephrase)."""
     from difflib import SequenceMatcher
     a, b = _norm(a), _norm(b)
-    return bool(a and b) and (a in b or b in a or SequenceMatcher(None, a, b).ratio() >= 0.75)
+    if not (a and b):
+        return False
+    short, long_ = sorted((a, b), key=len)
+    if short in long_ and len(short) >= 0.7 * len(long_):   # substring only when nearly the whole item
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.75
 
 
 def _error_lines(tail: str, n: int = 3) -> str:
@@ -587,12 +592,14 @@ class Agent:
         stat = gitops.git(["diff", "--stat", f"{base_sha}..HEAD"], root, check=False)
         diff = gitops.git(["diff", f"{base_sha}..HEAD", "--", ".", ":(exclude).k2loop"], root, check=False)
         self.emit("stage", name="verify", msg="Hedef gerçekten tamamlandı mı? (güçlü model kontrol ediyor)")
-        prompt = VERIFY_PROMPT.format(goal=g.text, done="\n".join(f"- {t}" for t in done_titles) or "-",
-                                      stat=stat[:4000], diff=diff[:30000])
+        from .planner import input_budget_chars
+        done = "\n".join(f"- {t}" for t in done_titles) or "-"
+        room = max(4000, input_budget_chars(self.cfg) - len(g.text) - len(done) - 5000)
+        prompt = VERIFY_PROMPT.format(goal=g.text, done=done, stat=stat[:4000], diff=diff[:room])
         v, err = None, ""
         for _ in range(3):  # an unclear answer is asked again, never taken as "done"
             try:
-                v = extract_json(self._model_call("strong", prompt, temperature=0.2))
+                v = extract_json(self._verifier_call(prompt, root))
             except Exception as exc:  # noqa: BLE001
                 err = str(exc)
                 continue
@@ -606,6 +613,17 @@ class Agent:
         rem = [str(x) for x in rem if x] if isinstance(rem, list) else []
         done = v["done"] or not rem
         return {"done": done, "remaining": [] if done else rem[:8], "why": str(v.get("why", ""))[:600]}
+
+    def _verifier_call(self, prompt: str, root: Path) -> str:
+        """Local mode: the strong local model. Hybrid mode: Claude (read-only), like the planner."""
+        if self.cfg.get("mode") == "local":
+            return self._model_call("strong", prompt, temperature=0.2)
+        from .claude import run_claude
+        res = run_claude(self.cfg, prompt, root, model=self.cfg["claude"]["review_model"], edit=False,
+                         timeout=900, max_turns=8)
+        if not res.ok:
+            raise RuntimeError(res.error or "claude failed")
+        return res.text
 
     @staticmethod
     def _next_round_goal(goal: str, history: list[tuple], remaining: list[str], extra: str = "") -> str:

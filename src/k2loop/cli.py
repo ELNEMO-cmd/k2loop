@@ -301,7 +301,7 @@ def cmd_bench(a: argparse.Namespace) -> int:
 def cmd_model_stats(a: argparse.Namespace) -> int:
     from .modelstats import choose_coder, format_table
     cfg = load_config()
-    print("Kod yazan modellerin ÖLÇÜLEN başarısı (her aday: testleri geçti mi?)")
+    print("Kod yazan modellerin ÖLÇÜLEN başarısı (taze adaylar + bench; eskalasyon ve hata-düzeltme denemeleri adil olmadığı için sayılmaz)")
     print(format_table(cfg))
     prof, why = choose_coder(cfg, [])
     print(f"\nŞu anki seçim (codegen_profile: {cfg['tot'].get('codegen_profile', 'auto')}): "

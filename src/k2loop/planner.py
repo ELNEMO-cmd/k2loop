@@ -287,6 +287,14 @@ not over-engineered). Answer ONLY JSON:
 {{"scores":[...], "best_index":0, "why":"..."}}"""
 
 
+def fit_text(text: str, limit: int) -> str:
+    """Shorten long text to `limit` chars keeping the head (the goal itself) and the tail (latest context)."""
+    if len(text) <= limit:
+        return text
+    head = int(limit * 0.6)
+    return text[:head] + "\n... [kısaltıldı] ...\n" + text[-(limit - head - 30):]
+
+
 def research_block(research: str, limit: int = 8000) -> str:
     if not research.strip():
         return ""
@@ -297,9 +305,10 @@ def research_block(research: str, limit: int = 8000) -> str:
 def _local_alternatives(cfg: dict, goal: str, root: Path, log, research: str = "") -> tuple[list[dict], int, str]:
     from .llm import LLM
     from .swap import strong_model
-    budget = input_budget_chars(cfg)
-    rblock = research_block(research, int(budget * 0.2))
-    budget -= len(rblock)
+    full = input_budget_chars(cfg)
+    goal = fit_text(goal, int(full * 0.35))          # later rounds carry history, a diff and research
+    rblock = research_block(research, int(full * 0.15))
+    budget = full - len(rblock) - len(goal) - 3000   # the goal is in every prompt, plus the template
     ctx = repo_context(root, min(int(cfg["strong"].get("repo_context_chars", 24000)), int(budget * 0.45)))
     n = int(cfg["strong"].get("plan_samples", 3))
     strategies = REUSE_STRATEGIES if rblock else LOCAL_STRATEGIES
@@ -335,7 +344,8 @@ def _local_alternatives(cfg: dict, goal: str, root: Path, log, research: str = "
             return alts, 0, "single candidate"
         log(f"{cfg['strong']['model']}: planlar karşılaştırılıyor (hakem)...")
         verdict = llm.ask_json(JUDGE_PROMPT.format(n=len(alts), goal=goal,
-                                                   cands=json.dumps(alts, ensure_ascii=False)[:40_000]),
+                                                   cands=json.dumps(alts, ensure_ascii=False)[
+                                                       :max(4000, full - len(goal) - 3000)]),
                                "high", temperature=0.2) or {}
     scores = verdict.get("scores") if isinstance(verdict, dict) else None
     best = verdict.get("best_index", 0) if isinstance(verdict, dict) else 0

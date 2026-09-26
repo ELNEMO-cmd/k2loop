@@ -32,6 +32,17 @@
 - Gerçek Aider 0.86 ve sahte bir model sunucusuyla uçtan uca denendi (K2 araç-çağrı biçimi dahil).
 
 ### Düzeltmeler
+- **Sonraki turların planı modelin context'ini taşırabiliyordu.** Tur hedefi (geçmiş + başarısız diff + araştırma)
+  bütçeye sayılmıyordu; ölçümde 32–36 bin karakterlik istem 20,5 bin karakterlik bütçeye gidiyordu → planlama
+  çağrısı başarısız → döngü duruyordu. Hedef artık bütçeye sayılır ve gerekirse baştan/sondan korunarak kısaltılır;
+  hakem ve hedef kontrolü istemleri de bütçeye göre kesilir.
+- **Hibrit modda hedef kontrolü yerel modeli arıyordu** (kurulu olmayabilir → her hedef "doğrulanamadı"). Artık
+  hibritte Claude kontrol eder.
+- **Model istatistikleri 35B aleyhine taraflıydı:** eskalasyonlar (sadece güçlü model alır, K2'nin çözemediği işler)
+  ve hata-düzeltme denemeleri de sayılıyordu. Seçimde artık sadece taze adaylar ve bench sayılır.
+- **GPU ping-pong:** kodu güçlü model yazarken hata hipotezleri ve review hâlâ K2'ye gidiyordu → her adımda birkaç
+  kez model takası. Artık kodu yazan model bunları da yapar (CPU'daki yardımcı model aynen kalır).
+- Tekrar eden eksik tespiti "add tests" gibi kısa bir maddeyi daha uzun, farklı bir maddeyle aynı sayabiliyordu.
 - **Ajan döngüsü sessizce ölebiliyordu.** Planlayıcı hata durumunda `SystemExit` fırlatıyordu; ajan bunu yakalamadığı
   için döngü thread'i bitiyor, hedef sonsuza dek `running` kalıyor, yeni hedefler hiç çalışmıyordu. Artık hedef
   `failed` olur, döngü devam eder.

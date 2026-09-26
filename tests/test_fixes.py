@@ -319,3 +319,90 @@ def test_engine_lets_strong_model_write_code_when_boosted(tmp_path, monkeypatch)
     monkeypatch.setattr("k2loop.engine.run_aider", fake_aider)
     res = Engine(cfg, "task", repo, "r2", log=lambda m: None, emit=lambda *a, **k: None).run()
     assert res.status == "done" and used == ["strong"]
+
+
+# ---------------------------------------------------------------- review round 2
+def test_round_goal_fits_the_planner_context(tmp_path, monkeypatch):
+    import contextlib
+
+    from k2loop import planner
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    for i in range(60):
+        (repo / f"m{i}.py").write_text("\n".join(f"def f{j}(x):\n    return x + {j}" for j in range(40)))
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    sizes = []
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            pass
+
+        def ask_json(self, prompt, effort, **kw):
+            sizes.append(len(prompt))
+            if "candidate plans" in prompt:
+                return {"scores": [1, 2, 3], "best_index": 0}
+            if "look at the code" in prompt:
+                return {"files": [f"m{i}.py" for i in range(12)], "search": ["f1"], "done": True}
+            return {"alternatives": [{"name": "a" * 3000, "stages": [{"name": "s", "steps": [
+                {"title": "t", "description": "d" * 4000, "role": "backend"}]}]}]}
+
+    monkeypatch.setattr("k2loop.llm.LLM", FakeLLM)
+    monkeypatch.setattr("k2loop.swap.strong_model", lambda cfg, log=print: contextlib.nullcontext(True))
+    cfg = _cfg(tmp_path)
+    goal = "hedef\n" + "- step\n" * 200 + "CLOSEST FAILED ATTEMPT:\n" + "+x\n" * 2500 + "RESEARCH:\n" + "r" * 5000
+    planner._local_alternatives(cfg, goal, repo, log=lambda *_: None, research="R" * 20000)
+    assert max(sizes) <= planner.input_budget_chars(cfg) + 3000, sizes
+
+
+def test_fit_text_keeps_head_and_tail():
+    from k2loop.planner import fit_text
+    t = fit_text("GOAL " + "x" * 1000 + " Plan ONLY the remaining work.", 200)
+    assert len(t) <= 200 and t.startswith("GOAL") and t.endswith("remaining work.")
+
+
+def test_hybrid_mode_verifies_with_claude(tmp_path, monkeypatch):
+    import json
+
+    from k2loop.claude import ClaudeResult
+    cfg = _cfg(tmp_path)
+    cfg["mode"] = "hybrid"
+    ag = Agent(cfg)
+    repo = _repo(tmp_path, "exit 0\n")
+    monkeypatch.setattr(ag, "_model_call", mock.Mock(side_effect=AssertionError("local model must not be used")))
+    monkeypatch.setattr("k2loop.claude.run_claude", lambda *a, **k: ClaudeResult(
+        True, json.dumps({"done": True, "remaining": [], "why": "ok"})))
+    g = ag.submit("x")
+    head = gitops.git(["rev-parse", "HEAD"], repo).strip()
+    assert ag._verify_goal(g, repo, head, ["a"])["done"] is True
+
+
+def test_similar_items():
+    from k2loop.agent import _similar
+    assert _similar("--out bayrağı yok", "--out bayrağı eksik")
+    assert _similar("Add tests for the parser", "add tests for the parser.")
+    assert not _similar("add tests", "add tests for the --out flag and the csv export")
+
+
+def test_escalations_do_not_count_against_the_strong_model(tmp_path):
+    from k2loop import modelstats
+    cfg = _cfg(tmp_path)
+    cfg["mode"] = "local"
+    for i in range(25):
+        modelstats.record(cfg, "strong", kind="codegen", types=["python"], usable=True, passed=i < 15,
+                          failures=0, secs=1)
+        modelstats.record(cfg, "strong", kind="escalate", types=["python"], usable=True, passed=False,
+                          failures=3, secs=1)  # handed K2's hopeless cases
+        modelstats.record(cfg, "llm", kind="codegen", types=["python"], usable=True, passed=i < 10,
+                          failures=0, secs=1)
+    assert modelstats.choose_coder(cfg, ["python"])[0] == "strong"
+
+
+def test_strong_coder_also_debugs_and_reviews(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg["mode"] = "local"
+    cfg["tot"]["codegen_profile"] = "strong"
+    repo = _repo(tmp_path, "exit 0\n")
+    eng = Engine(cfg, "t", repo, "r9", log=lambda m: None, emit=lambda *a, **k: None)
+    assert eng.llm.profile == "strong" and eng.reviewer.profile == "strong"
+    assert eng.scorer.profile == "helper"  # CPU model stays: no GPU swap

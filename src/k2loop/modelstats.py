@@ -12,6 +12,10 @@ from .config import data_dir
 from .jsonl import append_jsonl, read_jsonl
 
 CODERS = ("llm", "strong")   # config profiles that can write code through Aider
+# Only attempts both models get under the same conditions count for the choice: fresh candidates and the benchmark.
+# Escalations start from K2's failing work (only the strong model gets those) and debug fixes start from a failure:
+# counting them would punish whichever model is handed the hard cases.
+FAIR_KINDS = ("codegen", "bench")
 
 
 def _path(cfg: dict) -> Path:
@@ -28,12 +32,15 @@ def record(cfg: dict, profile: str, *, kind: str, types: list[str], usable: bool
         pass
 
 
-def summary(cfg: dict, types: list[str] | None = None) -> dict[str, dict]:
-    """Per model name: n, usable, passed, rate (smoothed pass rate), mean_secs. `types` filters by project type."""
+def summary(cfg: dict, types: list[str] | None = None, kinds: tuple[str, ...] | None = FAIR_KINDS) -> dict[str, dict]:
+    """Per model name: n, usable, passed, rate (smoothed pass rate), mean_secs. `types` filters by project type,
+    `kinds` by attempt kind (None = all)."""
     want = set(types or [])
     out: dict[str, dict] = {}
     for r in read_jsonl(_path(cfg)):
         if want and not want & set(r.get("types") or []):
+            continue
+        if kinds and r.get("kind") not in kinds:
             continue
         s = out.setdefault(r.get("model", "?"), {"n": 0, "usable": 0, "passed": 0, "secs": 0.0})
         s["n"] += 1
