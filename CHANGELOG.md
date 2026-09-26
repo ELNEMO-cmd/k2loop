@@ -11,6 +11,13 @@
   dal sayısı, güçlü-model eskalasyonu, görev süresi). Sadece `agent.max_stalled_rounds` (3) tur üst üste hiçbir adım
   geçmezse durup insana sorar. Hedef kontrolünün belirsiz cevabı tekrar sorulur, asla "bitti" sayılmaz.
   `agent.stop_on_failed_step` kaldırıldı (başarısız adım artık turu bitirir, hedefi değil).
+- **Takılınca araştırır:** başarısız adımın hata mesajı ve tekrar eden eksikler internette aranır, sonuç yeni plana
+  girer (`agent.research_on_failure`).
+- **En yakın başarısız deneme korunur:** diff'i ve hata çıktısı sonraki turun planına verilir.
+- **Güçlü model devralır:** çaba seviyesi 2'ye çıkınca (yerel modda) adayları K2 yerine güçlü model yazar.
+- **Plan ⇄ kontrol sonsuz döngüsü kapatıldı:** sadece daha önce söylenmiş eksiklerin tekrar gelmesi ilerleme sayılmaz;
+  `agent.max_stalled_rounds` tur üst üste ilerleme olmazsa insana sorulur.
+- **Test yoksa:** uyarı + ilk adım test altyapısı; k2loop'un ürettiği `check.sh` yeni testleri görünce yenilenir.
 - Open WebUI'da her tur `🔁 Tur n/N` başlığıyla, hedef kontrolü `🎯` / `🔁` satırıyla görünür.
 
 ### Düzeltmeler

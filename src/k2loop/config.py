@@ -57,7 +57,8 @@ DEFAULTS: dict[str, Any] = {
         # completing the goal matters more than speed: every failure raises the effort of the next attempt
         "max_rounds": 0,             # planning rounds per goal (0 = until done)
         "goal_time_budget_min": 0,   # no new step/round starts after this (0 = no limit)
-        "max_stalled_rounds": 3,     # stop and ask a human only after this many rounds in a row pass no step
+        "max_stalled_rounds": 3,     # stop and ask a human after this many rounds in a row without progress
+        "research_on_failure": True, # stuck? search the internet for the failing error / the missing piece
         "verify_goal": True,         # when all steps pass, the strong model checks the goal against the diff
     },
     "plan": {  # plan goals on any topic: ToT branches + multi-agent debate + judge + refine

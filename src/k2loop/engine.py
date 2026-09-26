@@ -68,6 +68,7 @@ class Result:
     verified: bool = False
     patch_path: str | None = None
     sha: str | None = None
+    check_tail: str = ""          # failing check output of the closest attempt (for re-planning / research)
 
 
 class Engine:
@@ -103,6 +104,10 @@ class Engine:
             self.esc_left = int(cfg["claude"]["max_escalations_per_task"]) if cfg["claude"].get("enabled") else 0
         self.worktrees: list[Path] = []
         self.notes: list[str] = []
+        self.best_fail: Cand | None = None   # closest failing attempt (debug keeps it up to date)
+        # who writes the candidates: llm (K2) | strong (the strong local model; the goal loop switches to it
+        # after repeated failures)
+        self.gen_profile = self.tot.get("codegen_profile", "llm") if self.local else "llm"
 
     # ------------------------------------------------------------ helpers
     def emit(self, kind: str, **data) -> None:
@@ -151,12 +156,25 @@ class Engine:
         return min(float(self.tot["aider_timeout_min"]) * 60, max(120.0, self.left() - 180))
 
     def _generate(self, name: str, message: str, effort: str, base_diff: str | None = None,
-                  profile: str = "llm") -> tuple[str, Path, bool, str, str]:
-        """GPU part: Aider + K2 edit a fresh worktree. Returns (name, dir, aider_ok, aider_out, diff)."""
+                  profile: str | None = None) -> tuple[str, Path, bool, str, str]:
+        """GPU part: Aider + K2 (or the strong model) edit a fresh worktree. Returns (name, dir, aider_ok, aider_out,
+        diff)."""
+        profile = profile or self.gen_profile
         d = self._wt(name, base_diff)
         self.emit("cand_start", name=name, msg=message.removeprefix(CODEGEN_RULES)[-300:])
-        with span(f"aider:{name}", "TOOL", tool__name="aider", input__value=message[-4000:]) as sp:
-            ok, out = run_aider(self.cfg, d, message, effort, self._aider_timeout(), self.hint_files, profile=profile)
+        with span(f"aider:{name}", "TOOL", tool__name="aider", input__value=message[-4000:],
+                  llm__model_name=self.cfg[profile]["model"]) as sp:
+            up = True
+            if profile == "strong":
+                from .swap import strong_model
+                with strong_model(self.cfg, self.log) as up:
+                    if up:
+                        ok, out = run_aider(self.cfg, d, message, effort, self._aider_timeout(), self.hint_files,
+                                            profile="strong")
+                if not up:
+                    self.notes.append(f"{name}: strong model unavailable, K2 wrote it")
+            if profile != "strong" or not up:
+                ok, out = run_aider(self.cfg, d, message, effort, self._aider_timeout(), self.hint_files)
             set_attrs(sp, output__value=out[-4000:], aider_ok=ok)
         (self.run_dir / f"{name}.aider.log").write_text(out, encoding="utf-8")
         return name, d, ok, out, gitops.snapshot_diff(d)
@@ -308,6 +326,7 @@ class Engine:
                 return c, (f"{self.cfg['strong']['model']}-local" if self.local else "claude")
         for r in esc_recs:
             self.decider.outcome(r, "retry_escalate", "ask_human")
+        self.best_fail = cur
         self._save_patch(cur, "best-failing")
         return None, "human"
 
@@ -491,9 +510,11 @@ class Engine:
                 else:
                     source = "human"
             if win is None:
-                patch = self._save_patch(min(cands, key=lambda c: c.chk.failures) if cands else None, "best-attempt")
+                usable = [c for c in cands if c.usable]
+                best = self.best_fail or (min(usable, key=lambda c: (c.chk.failures, c.lines)) if usable else None)
+                patch = self._save_patch(best, "best-attempt")
                 return Result("human", "k2loop could not make the checks pass. " + "; ".join(self.notes),
-                              patch_path=patch)
+                              patch_path=patch, check_tail=log_tail(best.chk.output, 2500) if best else "")
             win = self.review(win)
             if self.cancelled():
                 patch = self._save_patch(win, "cancelled-winner")

@@ -68,7 +68,8 @@ agent:                       # `k2loop serve` (systemd: k2-agent) — Open WebUI
   # öncelik işi bitirmek, hızlı bitirmek değil: her başarısızlıktan sonra çaba artar
   max_rounds: 0              # hedef başına en fazla plan turu (0 = bitene kadar)
   goal_time_budget_min: 0    # bu süreden sonra yeni adım/tur başlamaz (0 = sınırsız)
-  max_stalled_rounds: 3      # üst üste bu kadar tur hiç adım geçmezse durup insana sorar
+  max_stalled_rounds: 3      # üst üste bu kadar tur ilerleme olmazsa durup insana sorar
+  research_on_failure: true  # takılınca hatayı / eksik parçayı internette ara
   verify_goal: true          # adımlar geçince güçlü model hedefi diff'e bakarak kontrol eder
 
 plan:                        # her konuda plan hedefleri: ToT dalları + tartışma + hakem + son düzenleme

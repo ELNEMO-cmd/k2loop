@@ -93,13 +93,19 @@ Bir kod hedefi şöyle ilerler:
    en küçük diff; hiçbiri geçmezse hata sınıflandırılır (Laya #1) → 3 fix hipotezi → yardımcı model puanlar → 2'si seçilir
    (Laya #2) → denenir; seviyeler arasında devam/eskale/insana sor (Laya #3); gerekirse Qwen eskalasyonu.
 4. **Review:** 3 oy + Qwen son kontrol. Kazanan diff `k2loop/<tarih>-<hedef>` dalına commit'lenir. Ana dalına sen alırsın.
-5. **Döngü — hedef bitene kadar:** öncelik işi bitirmek, hızlı bitirmek değil. Bir adım geçemezse hedef durmaz; o tur
-   biter ve kalan iş, neyin neden başarısız olduğu bilgisiyle **yeniden planlanır** (farklı yaklaşım, daha küçük
-   adımlar). Her başarısızlıktan sonra **çaba artar**: daha çok aday, daha derin hata ayıklama, daha çok güçlü-model
-   eskalasyonu, daha uzun süre. Bütün adımlar geçince güçlü model hedefi gerçek diff'le karşılaştırır; eksik varsa bir
-   sonraki tura girer; cevap belirsizse tekrar sorulur ve asla "bitti" sayılmaz. Tur ve süre sınırı varsayılan olarak
-   yok (`agent.max_rounds`, `agent.goal_time_budget_min`: 0 = sınırsız); sadece `agent.max_stalled_rounds` (3) tur üst
-   üste hiçbir adım geçmezse durup insana sorar. `/iptal` her zaman durdurur.
+5. **Döngü — hedef bitene kadar:** öncelik işi bitirmek, hızlı bitirmek değil.
+   - Bir adım geçemezse hedef durmaz; o tur biter ve kalan iş **yeniden planlanır**. Yeni plan şunları bilir:
+     commit'lenen adımlar, başarısız denemeler, **en yakın başarısız denemenin diff'i** (doğru kısımları yeniden
+     kullanılır) ve **takılınan hatanın internetteki çözümleri** (hata mesajı araştırılır).
+   - Her başarısızlıktan sonra **çaba artar**: daha çok aday, daha derin hata ayıklama, daha çok eskalasyon, daha uzun
+     süre; K2 tekrar tekrar takılırsa kodu **güçlü model kendisi yazar**.
+   - Bütün adımlar geçince güçlü model hedefi gerçek diff'le karşılaştırır; eksikler sonraki tura girer. Aynı eksik
+     tekrar gelirse araştırılır ve güçlü modele verilir; sadece eski eksiklerin tekrar etmesi ilerleme sayılmaz (sonsuz
+     plan ⇄ kontrol döngüsü olmaz). Belirsiz kontrol cevabı asla "bitti" sayılmaz.
+   - Projede test yoksa uyarır ve ilk adım test altyapısı kurmak olur; k2loop'un ürettiği `check.sh` yeni testleri
+     görünce kendini yeniler (elle düzenlenmiş `check.sh`'e dokunulmaz).
+   - Tur ve süre sınırı varsayılan olarak yok (`agent.max_rounds`, `agent.goal_time_budget_min`: 0 = sınırsız);
+     `agent.max_stalled_rounds` (3) tur üst üste ilerleme olmazsa durup insana sorar. `/iptal` her zaman durdurur.
 
 Ajan projede commit'lenmemiş değişiklik varsa başlamaz; `.k2loop/check.sh` yoksa üretir. **`.k2loop/check.sh`
 sistemin hakemidir** — istediğin gibi düzenle ve commit'le.

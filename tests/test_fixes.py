@@ -140,7 +140,10 @@ def test_secrets_quotes_stripped(tmp_path):
 ENGINE_CFGS: list[dict] = []
 
 
-def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0):
+RESEARCH_QUERIES: list[str] = []
+
+
+def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0, check_sh="exit 0\n", on_done=None):
     """step_results: per round, the statuses of that round's steps; verdicts: answers of the goal check."""
     import json
 
@@ -150,7 +153,7 @@ def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0):
     cfg = _cfg(tmp_path)
     cfg["agent"].update(research_first=False, max_rounds=max_rounds)
     monkeypatch.setattr("k2loop.agent.load_config", lambda: cfg)
-    repo = _repo(tmp_path, "exit 0\n")
+    repo = _repo(tmp_path, check_sh)
     ag = Agent(cfg)
     goals_seen: list[str] = []
     rounds = iter(step_results)
@@ -172,7 +175,14 @@ def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0):
         def run(self):
             plan = yaml.safe_load((tmp_path / f"plan{len(goals_seen)}.yaml").read_text())
             st = next(s["_st"] for s in plan["stages"][0]["steps"] if s["title"] == self.title)
-            return Result(st, f"summary of {self.title}")
+            if st == "done":
+                if on_done:
+                    on_done(repo)
+                return Result(st, f"summary of {self.title}")
+            patch = tmp_path / f"{self.title}.patch"
+            patch.write_text(f"+ attempt of {self.title}\n")
+            return Result(st, f"summary of {self.title}", patch_path=str(patch),
+                          check_tail="E   AssertionError: 3 != 4\nFAILED tests/test_x.py::test_rows")
 
     answers = iter(verdicts)
     monkeypatch.setattr("k2loop.planner.make_plan", fake_plan)
@@ -181,6 +191,14 @@ def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0):
     monkeypatch.setattr(ag, "_model_call", lambda profile, prompt, **kw: (
         a if isinstance(a := next(answers), str) else json.dumps(a)))
     ENGINE_CFGS.clear()
+    RESEARCH_QUERIES.clear()
+
+    class FakeResearcher:
+        def run(self, q, iterations=None):
+            RESEARCH_QUERIES.append(q)
+            return {"summary": "use csv.Sniffer [1]", "sources": []}
+
+    monkeypatch.setattr(ag, "_researcher", lambda: FakeResearcher())
     g = ag.submit(f"{repo} içine özellik ekle")
     ag.q.next(0.1)
     status, text = ag.code_goal(g, {"kind": "code", "project": str(repo), "topic": "x"})
@@ -232,3 +250,72 @@ def test_goal_loop_round_limit(tmp_path, monkeypatch):
     status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"], ["done"]],
                                       [{"done": False, "remaining": ["a"], "why": ""}] * 2, max_rounds=2)
     assert status == "failed" and "tur sınırı (2)" in text and "Eksik kalanlar" in text
+
+
+def test_goal_loop_verifier_ping_pong_is_stopped(tmp_path, monkeypatch):
+    same = [{"done": False, "remaining": ["--out bayrağı yok"], "why": ""},
+            {"done": False, "remaining": ["--out bayrağı eksik"], "why": ""}] * 5
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"]] * 10, same)
+    assert status == "failed" and len(goals) == 4 and "ilerleme olmadı" in text  # 1 new + 3 repeats
+    assert ENGINE_CFGS[-1]["tot"].get("codegen_profile") == "strong"   # repeated item: the strong model codes
+    assert any("--out" in q for q in RESEARCH_QUERIES)                  # ...and the missing piece is researched
+
+
+def test_goal_loop_researches_failure_and_carries_closest_attempt(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done", "human"], ["done"]],
+                                      [{"done": True, "remaining": [], "why": "tamam"}])
+    assert status == "done"
+    assert "AssertionError: 3 != 4" in RESEARCH_QUERIES[0] and "r1-step1" in RESEARCH_QUERIES[0]
+    assert "CLOSEST FAILED ATTEMPT" in goals[1] and "attempt of r1-step1" in goals[1]
+    assert "use csv.Sniffer" in goals[1]
+
+
+def test_goal_loop_without_tests_asks_for_a_test_setup_first(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"]],
+                                      [{"done": True, "remaining": [], "why": "tamam"}])
+    assert "NO automated tests" in goals[0]
+
+
+def _add_tests(repo):
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n")
+
+
+def test_generated_check_sh_follows_new_tests(tmp_path, monkeypatch):
+    from k2loop.project import detect, render_check_sh
+    empty = tmp_path / "e"
+    empty.mkdir()
+    auto = render_check_sh(detect(empty)["checks"])  # what k2loop writes for a project without tests
+    _loop_agent(tmp_path, monkeypatch, [["done"]], [{"done": True, "remaining": [], "why": "tamam"}],
+                check_sh=auto, on_done=_add_tests)
+    chk = (tmp_path / "repo" / ".k2loop" / "check.sh").read_text()
+    assert "pytest" in chk and "K2LOOP_NO_CHECKS" not in chk
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=tmp_path / "repo", capture_output=True, text=True).stdout
+    assert "regenerate .k2loop/check.sh" in log
+
+
+def test_user_edited_check_sh_is_never_regenerated(tmp_path, monkeypatch):
+    _loop_agent(tmp_path, monkeypatch, [["done"]], [{"done": True, "remaining": [], "why": "tamam"}],
+                check_sh="make my-own-checks\n", on_done=_add_tests)
+    assert (tmp_path / "repo" / ".k2loop" / "check.sh").read_text() == "make my-own-checks\n"
+
+
+def test_engine_lets_strong_model_write_code_when_boosted(tmp_path, monkeypatch):
+    import contextlib
+    repo = _repo(tmp_path, "exit 0\n")
+    cfg = _cfg(tmp_path)
+    cfg["tot"]["candidates"] = 1
+    cfg["tot"]["codegen_profile"] = "strong"
+    cfg["strong"]["final_review"] = "none"
+    cfg["tot"]["review_votes"] = 0
+    used = []
+    monkeypatch.setattr("k2loop.swap.strong_model", lambda cfg, log=print: contextlib.nullcontext(True))
+
+    def fake_aider(cfg, d, msg, effort, timeout, files=None, profile="llm"):
+        used.append(profile)
+        (Path(d) / "a.py").write_text("x = 5\n")
+        return True, "ok"
+
+    monkeypatch.setattr("k2loop.engine.run_aider", fake_aider)
+    res = Engine(cfg, "task", repo, "r2", log=lambda m: None, emit=lambda *a, **k: None).run()
+    assert res.status == "done" and used == ["strong"]
