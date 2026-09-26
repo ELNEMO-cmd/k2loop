@@ -500,22 +500,43 @@ class Agent:
             gitops.commit_staged(root, "k2loop: ignore run artefacts")
         return br, cur
 
-    def _run_steps(self, g: Goal, root: Path, plan_path: Path, rnd: int, types: list[str]) -> list[tuple]:
+    @staticmethod
+    def _boosted(cfg: dict, level: int) -> dict:
+        """More effort after every failure: more candidates, deeper debugging, more escalations, more time.
+        Completing the goal matters more than finishing fast."""
+        import copy
+        if level <= 0:
+            return cfg
+        c = copy.deepcopy(cfg)
+        t, st = c["tot"], c["strong"]
+        t["candidates"] = min(int(t["candidates"]) + level, 6)
+        t["debug_depth"] = int(t["debug_depth"]) + level
+        t["debug_branches"] = min(int(t["debug_branches"]) + level, 5)
+        t["keep_branches"] = min(int(t["keep_branches"]) + level, int(t["debug_branches"]))
+        t["task_time_budget_min"] = float(t["task_time_budget_min"]) * (1 + level)
+        st["max_escalations_per_task"] = int(st["max_escalations_per_task"]) + level
+        c["claude"]["max_escalations_per_task"] = int(c["claude"]["max_escalations_per_task"]) + level
+        return c
+
+    def _run_steps(self, g: Goal, root: Path, plan_path: Path, rnd: int, types: list[str],
+                   level: int = 0) -> list[tuple]:
         """Run one plan's steps in order; stops at the first step that does not finish (the next round re-plans).
-        Returns [(title, status, summary, description)]."""
+        `level` = how many attempts already failed in this goal (raises the effort). Returns
+        [(title, status, summary, description)]."""
         from .engine import Engine
+        cfg = self._boosted(self.cfg, level)
         plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
         steps = [sp for st in plan["stages"] for sp in st["steps"]]
         results: list[tuple] = []
         for i, sp in enumerate(steps, 1):
-            if self.q.cancel_requested or time.time() > self._goal_deadline:
+            if self.q.cancel_requested or self._out_of_time():
                 break
             self.emit("step", i=i, n=len(steps), title=sp["title"], state="started", round=rnd)
             task = f"{sp['title']}\n\n{sp.get('description', '')}"
             if sp.get("files"):
                 task += "\n\nFiles: " + ", ".join(sp["files"])
             run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{g.id}-r{rnd}s{i}"
-            res = Engine(self.cfg, task, root, run_id, hb=_CancelHB(self.q),
+            res = Engine(cfg, task, root, run_id, hb=_CancelHB(self.q),
                          log=lambda m: None, hint_files=[f for f in sp.get("files", []) if (root / f).exists()],
                          project_types=types, title=sp["title"], emit=self.ev.emit).run()
             results.append((sp["title"], res.status, res.summary, sp.get("description", "")))
@@ -533,16 +554,21 @@ class Agent:
         stat = gitops.git(["diff", "--stat", f"{base_sha}..HEAD"], root, check=False)
         diff = gitops.git(["diff", f"{base_sha}..HEAD", "--", ".", ":(exclude).k2loop"], root, check=False)
         self.emit("stage", name="verify", msg="Hedef gerçekten tamamlandı mı? (güçlü model kontrol ediyor)")
-        try:
-            out = self._model_call("strong", VERIFY_PROMPT.format(
-                goal=g.text, done="\n".join(f"- {t}" for t in done_titles) or "-", stat=stat[:4000],
-                diff=diff[:30000]), temperature=0.2)
-            v = extract_json(out)
-        except Exception as exc:  # noqa: BLE001
-            self.emit("log", text=f"hedef kontrolü çalışmadı ({exc}); tamamlandı sayılıyor")
-            return {"done": True, "remaining": [], "why": "kontrol yapılamadı"}
-        if not isinstance(v, dict) or not isinstance(v.get("done"), bool):
-            return {"done": True, "remaining": [], "why": "kontrol cevabı okunamadı"}
+        prompt = VERIFY_PROMPT.format(goal=g.text, done="\n".join(f"- {t}" for t in done_titles) or "-",
+                                      stat=stat[:4000], diff=diff[:30000])
+        v, err = None, ""
+        for _ in range(3):  # an unclear answer is asked again, never taken as "done"
+            try:
+                v = extract_json(self._model_call("strong", prompt, temperature=0.2))
+            except Exception as exc:  # noqa: BLE001
+                err = str(exc)
+                continue
+            if isinstance(v, dict) and isinstance(v.get("done"), bool):
+                break
+            v = None
+        if v is None:
+            self.emit("log", text=f"hedef kontrolü yapılamadı {err[:200]}")
+            return {"done": False, "unverified": True, "remaining": [], "why": "kontrol yapılamadı"}
         rem = v.get("remaining")
         rem = [str(x) for x in rem if x] if isinstance(rem, list) else []
         done = v["done"] or not rem
@@ -578,7 +604,8 @@ class Agent:
         br, base_branch = self._prepare_repo(root, g)
         base_sha = gitops.git(["rev-parse", "HEAD"], root).strip()
         self.emit("stage", name="repo", msg=f"Proje: {root}  ·  dal: {br}")
-        self._goal_deadline = time.time() + float(ac.get("goal_time_budget_min", 720)) * 60
+        budget = float(ac.get("goal_time_budget_min", 0) or 0)   # 0 = no time limit
+        self._goal_deadline = time.time() + budget * 60 if budget > 0 else float("inf")
 
         research = ""
         if ac.get("research_first", True):
@@ -595,20 +622,29 @@ class Agent:
             return "cancelled", "İptal edildi (araştırmadan sonra)."
 
         types = detect(root)["types"]
-        max_rounds = max(1, int(ac.get("max_rounds", 3)))
+        max_rounds = int(ac.get("max_rounds", 0) or 0)            # 0 = no round limit
+        max_stalled = max(1, int(ac.get("max_stalled_rounds", 3)))
         history: list[tuple] = []        # every step of every round: (title, status, summary, description)
         remaining: list[str] = []
         verdict = ""
-        finished, stalled, stop_note = False, 0, ""
-        for rnd in range(1, max_rounds + 1):
+        finished, unverified, stalled, fails, stop_note = False, False, 0, 0, ""
+        rnd = 0
+        while True:
+            rnd += 1
             if self.q.cancel_requested:
                 stop_note = "iptal edildi"
                 break
-            if time.time() > self._goal_deadline:
+            if max_rounds and rnd > max_rounds:
+                stop_note = f"tur sınırı ({max_rounds}) doldu"
+                break
+            if self._out_of_time():
                 stop_note = "hedefin süre bütçesi doldu"
                 break
-            self.emit("round", round=rnd, max=max_rounds,
-                      msg="İlk plan" if rnd == 1 else "Kalan iş yeniden planlanıyor")
+            level = min(fails, 3)
+            msg = "İlk plan" if rnd == 1 else "Kalan iş yeniden planlanıyor"
+            if level:
+                msg += f" · çaba artırıldı (seviye {level}: daha çok aday, daha derin hata ayıklama, daha çok süre)"
+            self.emit("round", round=rnd, max=max_rounds or "∞", msg=msg)
             goal_text = g.text if rnd == 1 else self._next_round_goal(g.text, history, remaining)
             self.emit("stage", name="plan", msg="Plan: 3 alternatif (hazırı kullan / uyarla / sıfırdan) + hakem"
                       if rnd == 1 else f"Tur {rnd}: kalan iş için yeni plan")
@@ -622,9 +658,10 @@ class Agent:
                 break
             self.emit("plan", text=summarize(plan_path), path=str(plan_path))
 
-            results = self._run_steps(g, root, plan_path, rnd, types)
+            results = self._run_steps(g, root, plan_path, rnd, types, level)
             history += results
             ok = sum(1 for _, s, *_ in results if s == "done")
+            fails += sum(1 for _, s, *_ in results if s not in ("done", "skipped"))
             stalled = 0 if ok else stalled + 1
             if self.q.cancel_requested:
                 stop_note = "iptal edildi"
@@ -639,18 +676,21 @@ class Agent:
                 if v["done"]:
                     finished = True
                     break
+                if v.get("unverified"):   # every step passed but nobody could confirm the goal: say so honestly
+                    unverified = True
+                    stop_note = "adımlar geçti ama hedef doğrulanamadı; lütfen kontrol et"
+                    break
                 remaining = v["remaining"]
             else:
                 remaining = []
-            if stalled >= 2:
-                stop_note = "iki tur üst üste hiçbir adım geçmedi"
+            if stalled >= max_stalled:
+                stop_note = f"{stalled} tur üst üste hiçbir adım geçmedi (artırılmış çabayla bile); insan gerekli"
                 break
-        else:
-            stop_note = stop_note or f"tur sınırı ({max_rounds}) doldu"
 
         icon = {"done": "✅", "human": "🟡", "failed": "❌", "cancelled": "⏹", "skipped": "⏸"}
         done_n = sum(1 for _, s, *_ in history if s == "done")
-        head = ("**Hedef tamamlandı**" if finished else f"**Hedef tamamlanmadı** ({stop_note})")
+        head = ("**Hedef tamamlandı**" if finished else
+                f"**Hedef doğrulanamadı** ({stop_note})" if unverified else f"**Hedef tamamlanmadı** ({stop_note})")
         lines = [f"{head} — {done_n} adım commit'lendi · dal `{br}` ({root})", ""]
         lines += [f"{icon.get(s, '•')} {t}" for t, s, *_ in history]
         if verdict:
@@ -662,3 +702,6 @@ class Agent:
             lines.append(f"Beğenirsen: `git switch {base_branch} && git merge {br}`")
         status = "done" if finished else ("cancelled" if self.q.cancel_requested else "failed")
         return status, "\n".join(lines)
+
+    def _out_of_time(self) -> bool:
+        return time.time() > getattr(self, "_goal_deadline", float("inf"))

@@ -54,8 +54,10 @@ DEFAULTS: dict[str, Any] = {
         "research_first": True,      # look for existing work on the internet before planning
         "research_iterations": 2,
         # a code goal runs in rounds until it is really done: plan → steps → verify → re-plan what is left
-        "max_rounds": 3,             # planning rounds per goal
-        "goal_time_budget_min": 720, # no new step/round starts after this
+        # completing the goal matters more than speed: every failure raises the effort of the next attempt
+        "max_rounds": 0,             # planning rounds per goal (0 = until done)
+        "goal_time_budget_min": 0,   # no new step/round starts after this (0 = no limit)
+        "max_stalled_rounds": 3,     # stop and ask a human only after this many rounds in a row pass no step
         "verify_goal": True,         # when all steps pass, the strong model checks the goal against the diff
     },
     "plan": {  # plan goals on any topic: ToT branches + multi-agent debate + judge + refine

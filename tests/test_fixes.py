@@ -137,7 +137,10 @@ def test_secrets_quotes_stripped(tmp_path):
 
 
 # ---------------------------------------------------------------- goal loop (rounds until done)
-def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=3):
+ENGINE_CFGS: list[dict] = []
+
+
+def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=0):
     """step_results: per round, the statuses of that round's steps; verdicts: answers of the goal check."""
     import json
 
@@ -164,6 +167,7 @@ def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=3):
     class FakeEngine:
         def __init__(self, cfg, task, root, run_id, **kw):
             self.title = kw["title"]
+            ENGINE_CFGS.append(cfg)
 
         def run(self):
             plan = yaml.safe_load((tmp_path / f"plan{len(goals_seen)}.yaml").read_text())
@@ -174,7 +178,9 @@ def _loop_agent(tmp_path, monkeypatch, step_results, verdicts, max_rounds=3):
     monkeypatch.setattr("k2loop.planner.make_plan", fake_plan)
     monkeypatch.setattr("k2loop.planner.summarize", lambda p: "plan")
     monkeypatch.setattr("k2loop.engine.Engine", FakeEngine)
-    monkeypatch.setattr(ag, "_model_call", lambda profile, prompt, **kw: json.dumps(next(answers)))
+    monkeypatch.setattr(ag, "_model_call", lambda profile, prompt, **kw: (
+        a if isinstance(a := next(answers), str) else json.dumps(a)))
+    ENGINE_CFGS.clear()
     g = ag.submit(f"{repo} içine özellik ekle")
     ag.q.next(0.1)
     status, text = ag.code_goal(g, {"kind": "code", "project": str(repo), "topic": "x"})
@@ -197,9 +203,29 @@ def test_goal_loop_continues_when_verifier_finds_missing_work(tmp_path, monkeypa
     assert "STILL MISSING" in goals[1] and "--out" in goals[1]
 
 
-def test_goal_loop_stops_when_no_progress(tmp_path, monkeypatch):
-    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["human"], ["failed"], ["done"]], [])
-    assert status == "failed" and len(goals) == 2 and "iki tur" in text
+def test_goal_loop_keeps_going_with_more_effort(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["human"], ["failed"], ["done"]],
+                                      [{"done": True, "remaining": [], "why": "tamam"}])
+    assert status == "done" and len(goals) == 3  # two failed rounds are not a reason to give up
+    tots = [c["tot"] for c in ENGINE_CFGS]
+    assert [t["candidates"] for t in tots] == [3, 4, 5]
+    assert [t["debug_depth"] for t in tots] == [2, 3, 4]
+    assert tots[2]["task_time_budget_min"] == 3 * tots[0]["task_time_budget_min"]
+    assert ENGINE_CFGS[2]["strong"]["max_escalations_per_task"] == 3
+
+
+def test_goal_loop_stops_only_when_really_stuck(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["human"]] * 5, [])
+    assert status == "failed" and len(goals) == 3 and "insan gerekli" in text
+
+
+def test_unclear_verifier_is_asked_again_and_never_means_done(tmp_path, monkeypatch):
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"]], ["???", "hmm", {"x": 1}])
+    assert status == "failed" and "doğrulanamadı" in text
+    (tmp_path / "b").mkdir()
+    status, text, goals = _loop_agent(tmp_path / "b", monkeypatch, [["done"]],
+                                      ["???", {"done": True, "remaining": [], "why": "tamam"}])
+    assert status == "done"
 
 
 def test_goal_loop_round_limit(tmp_path, monkeypatch):

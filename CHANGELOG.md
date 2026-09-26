@@ -6,7 +6,10 @@
 - Önceden bir adım başarısız olunca hedef bitiyordu. Artık **turlar** var: plan → adımlar → kontrol → kalanı yeniden
   planla. Yeni plan, commit'lenmiş adımları, başarısız denemeleri (ve sonuçlarını) ve eksikleri bilir.
 - Bütün adımlar geçince güçlü model hedefi diff'e bakarak doğrular (`agent.verify_goal`); eksik bulursa yeni tur açılır.
-- Ayarlar: `agent.max_rounds` (3), `agent.goal_time_budget_min` (720), `agent.verify_goal` (true).
+- Öncelik işi bitirmek: tur ve süre sınırı varsayılan olarak yok (`agent.max_rounds`, `agent.goal_time_budget_min`:
+  0 = sınırsız). Her başarısızlıktan sonra sonraki denemenin çabası artar (aday sayısı, hata ayıklama derinliği ve
+  dal sayısı, güçlü-model eskalasyonu, görev süresi). Sadece `agent.max_stalled_rounds` (3) tur üst üste hiçbir adım
+  geçmezse durup insana sorar. Hedef kontrolünün belirsiz cevabı tekrar sorulur, asla "bitti" sayılmaz.
   `agent.stop_on_failed_step` kaldırıldı (başarısız adım artık turu bitirir, hedefi değil).
 - Open WebUI'da her tur `🔁 Tur n/N` başlığıyla, hedef kontrolü `🎯` / `🔁` satırıyla görünür.
 
