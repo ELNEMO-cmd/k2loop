@@ -10,8 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 from . import __version__
 from .claude import version as claude_version
 from .config import CONFIG_PATH, data_dir, load_config, write_laya_overrides
@@ -376,11 +374,16 @@ def cmd_ask(a: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- doctor / status
 def _http_ok(url: str, timeout: float = 5, key: str = "") -> tuple[bool, str]:
+    import urllib.error
     import urllib.request
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"} if key else {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status < 400, f"HTTP {r.status}"
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ConnectionRefusedError):
+            return False, "bağlantı reddedildi (servis kapalı)"
+        return False, str(exc.reason)[:80]
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)[:80]
 
@@ -434,6 +437,8 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     else:
         row(False, "GPU", "nvidia-smi yok")
     ok, detail = LLM(cfg).health()
+    if not ok and "[Errno 111] Connection refused" in detail:
+        detail = "bağlantı reddedildi (servis kapalı)"
     row(ok, "K2 sunucusu", detail + (f" ctx={cfg['llm'].get('context')}" if ok else "  → journalctl --user -u k2-swap -n 50"))
     if ok and a.full:
         t = time.time()
@@ -445,6 +450,8 @@ def cmd_doctor(a: argparse.Namespace) -> int:
             row(False, "K2 cevap testi", str(exc))
     lc = LayaClient(cfg["laya"]["url"])
     ok, detail = lc.health()
+    if not ok and "[Errno 111] Connection refused" in detail:
+        detail = "bağlantı reddedildi (servis kapalı)"
     row(ok or not cfg["laya"]["enabled"], "Laya servisi", detail[:80] if ok else detail + "  → systemctl --user status k2-laya")
     if ok and a.full:
         ans = lc.predict({"log_tail": "ModuleNotFoundError: No module named 'requests'"}, QUESTIONS["test_classification"])
