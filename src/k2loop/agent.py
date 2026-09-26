@@ -527,11 +527,11 @@ class Agent:
         return br, cur
 
     @staticmethod
-    def _boosted(cfg: dict, level: int) -> dict:
+    def _boosted(cfg: dict, level: int, coder: str | None = None) -> dict:
         """More effort after every failure: more candidates, deeper debugging, more escalations, more time.
         Completing the goal matters more than finishing fast."""
         import copy
-        if level <= 0:
+        if level <= 0 and not coder:
             return cfg
         c = copy.deepcopy(cfg)
         t, st = c["tot"], c["strong"]
@@ -541,18 +541,18 @@ class Agent:
         t["keep_branches"] = min(int(t["keep_branches"]) + level, int(t["debug_branches"]))
         t["task_time_budget_min"] = float(t["task_time_budget_min"]) * (1 + level)
         st["max_escalations_per_task"] = int(st["max_escalations_per_task"]) + level
-        if level >= 2 and c.get("mode") == "local":
-            t["codegen_profile"] = "strong"   # K2 keeps failing: the strong model writes the candidates itself
+        if coder:
+            t["codegen_profile"] = coder      # chosen from measured pass rates (modelstats.choose_coder)
         c["claude"]["max_escalations_per_task"] = int(c["claude"]["max_escalations_per_task"]) + level
         return c
 
     def _run_steps(self, g: Goal, root: Path, plan_path: Path, rnd: int, types: list[str],
-                   level: int = 0) -> list[tuple]:
+                   level: int = 0, coder: str | None = None) -> list[tuple]:
         """Run one plan's steps in order; stops at the first step that does not finish (the next round re-plans).
         `level` = how many attempts already failed in this goal (raises the effort). Returns
         [(title, status, summary, description)]."""
         from .engine import Engine
-        cfg = self._boosted(self.cfg, level)
+        cfg = self._boosted(self.cfg, level, coder)
         plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
         steps = [sp for st in plan["stages"] for sp in st["steps"]]
         results: list[tuple] = []
@@ -568,6 +568,7 @@ class Agent:
                          log=lambda m: None, hint_files=[f for f in sp.get("files", []) if (root / f).exists()],
                          project_types=types, title=sp["title"], emit=self.ev.emit).run()
             results.append((sp["title"], res.status, res.summary, sp.get("description", "")))
+            self._last_coder = res.coder
             self.emit("step", i=i, n=len(steps), title=sp["title"], state=res.status, summary=res.summary[:600],
                       sha=res.sha, patch=res.patch_path, round=rnd)
             if res.status == "done":
@@ -716,6 +717,7 @@ class Agent:
         chk = root / ".k2loop" / "check.sh"
         self._auto_check = chk.exists() and chk.read_text(encoding="utf-8") == render_check_sh(info["checks"])
         self._failures: list[dict] = []
+        self._last_coder: str | None = None
         no_tests = not any(n == "tests" for n, _ in info["checks"])
         if no_tests:
             self.emit("log", text="⚠️ Bu projede otomatik test yok: doğrulama zayıf olur. İlk adım test altyapısı "
@@ -741,11 +743,15 @@ class Agent:
                 stop_note = "hedefin süre bütçesi doldu"
                 break
             level = min(fails + (2 if hard else 0), 3)
+            coder = None                          # round 1 / no failure: the engine picks by measurement
+            if level:
+                from .modelstats import choose_coder
+                coder, why = choose_coder(self.cfg, types, failed=self._last_coder)
+                self.emit("log", text=f"Kodu yazacak model: {self.cfg[coder]['model']} — {why}")
             msg = "İlk plan" if rnd == 1 else "Kalan iş yeniden planlanıyor"
             if level:
-                msg += (f" · çaba artırıldı (seviye {level}: daha çok aday, daha derin hata ayıklama, daha çok süre"
-                        + (", kodu güçlü model yazıyor" if level >= 2 and self.cfg.get("mode") == "local" else "")
-                        + ")")
+                msg += (f" · çaba artırıldı (seviye {level}: daha çok aday, daha derin hata ayıklama, daha çok süre;"
+                        f" kod: {self.cfg[coder]['model']})")
             self.emit("round", round=rnd, max=max_rounds or "∞", msg=msg)
             goal_text = (g.text + (NO_TESTS_NOTE if no_tests else "") if rnd == 1
                          else self._next_round_goal(g.text, history, remaining, extra))
@@ -762,7 +768,7 @@ class Agent:
             self.emit("plan", text=summarize(plan_path), path=str(plan_path))
 
             n_fail = len(self._failures)
-            results = self._run_steps(g, root, plan_path, rnd, types, level)
+            results = self._run_steps(g, root, plan_path, rnd, types, level, coder)
             history += results
             ok = sum(1 for _, s, *_ in results if s == "done")
             fails += sum(1 for _, s, *_ in results if s not in ("done", "skipped"))

@@ -134,7 +134,9 @@ class Formatter:
         return s + "".join(f"  - eksik: {r}\n" for r in ev.get("remaining") or [])
 
     def _task_start(self, ev: dict) -> str:
-        return "" if self.step_started else f"\n#### ⚙️ Görev: {ev.get('title')}\n\n"
+        coder = f"- ✍️ Kodu yazan: **{ev['coder']}**" + (f" ({ev['coder_reason']})" if ev.get("coder_reason") else "") \
+            + "\n" if ev.get("coder") else ""
+        return coder if self.step_started else f"\n#### ⚙️ Görev: {ev.get('title')}\n\n" + coder
 
     def _phase(self, ev: dict) -> str:
         key = f"{ev.get('stage')}|{ev.get('msg')}"

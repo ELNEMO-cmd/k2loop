@@ -58,6 +58,12 @@ tot:                         # Tree of Thoughts / Self-Consistency bütçesi (De
   aider_timeout_min: 25
   check_timeout_min: 15
   overlap_checks: true       # K2 sonraki adayı yazarken öncekinin testleri CPU'da koşar
+  # kodu kim yazsın: auto = ÖLÇÜLEN geçme oranı daha iyi olan (büyük olan değil; bkz. k2loop model-stats)
+  #                  llm = hep K2 · strong = hep güçlü model
+  # takılınca: ölçüme göre açıkça daha iyi olan, veri yoksa/fark küçükse takılandan farklı olan model denenir
+  codegen_profile: auto
+  coder_min_samples: 20      # ölçüme güvenmek için model başına en az aday
+  coder_margin: 0.05         # "açıkça daha iyi" sayılan geçme oranı farkı
 
 agent:                       # `k2loop serve` (systemd: k2-agent) — Open WebUI'da model adı: k2agent
   port: 8090

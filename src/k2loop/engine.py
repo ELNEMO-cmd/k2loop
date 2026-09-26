@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import gitops
+from . import gitops, modelstats
 from .aider_runner import run_aider
 from .claude import run_claude
 from .config import data_dir
@@ -69,6 +69,7 @@ class Result:
     patch_path: str | None = None
     sha: str | None = None
     check_tail: str = ""          # failing check output of the closest attempt (for re-planning / research)
+    coder: str = "llm"            # config profile that wrote the candidates
 
 
 class Engine:
@@ -105,9 +106,14 @@ class Engine:
         self.worktrees: list[Path] = []
         self.notes: list[str] = []
         self.best_fail: Cand | None = None   # closest failing attempt (debug keeps it up to date)
-        # who writes the candidates: llm (K2) | strong (the strong local model; the goal loop switches to it
-        # after repeated failures)
-        self.gen_profile = self.tot.get("codegen_profile", "llm") if self.local else "llm"
+        # who writes the candidates: llm (K2) | strong | auto (the one with the better MEASURED pass rate,
+        # modelstats); the goal loop sets it explicitly after failures
+        cp = self.tot.get("codegen_profile", "auto") if self.local else "llm"
+        self.coder_reason = ""
+        if cp == "auto":
+            cp, self.coder_reason = modelstats.choose_coder(cfg, self.project_types)
+        self.gen_profile = cp if cp in modelstats.CODERS else "llm"
+        self._gen_profiles: dict[str, str] = {}   # candidate name -> profile that wrote it
 
     # ------------------------------------------------------------ helpers
     def emit(self, kind: str, **data) -> None:
@@ -174,8 +180,10 @@ class Engine:
                 if not up:
                     self.notes.append(f"{name}: strong model unavailable, K2 wrote it")
             if profile != "strong" or not up:
+                profile = "llm"
                 ok, out = run_aider(self.cfg, d, message, effort, self._aider_timeout(), self.hint_files)
             set_attrs(sp, output__value=out[-4000:], aider_ok=ok)
+        self._gen_profiles[name] = profile
         (self.run_dir / f"{name}.aider.log").write_text(out, encoding="utf-8")
         return name, d, ok, out, gitops.snapshot_diff(d)
 
@@ -186,6 +194,12 @@ class Engine:
             set_attrs(sp, output__value=log_tail(chk.output, 3000), passed=chk.passed, failures=chk.failures)
         (self.run_dir / f"{name}.check.log").write_text(chk.output, encoding="utf-8")
         lines = gitops.diff_lines(diff)
+        if name in self._gen_profiles and not out.rstrip().endswith("not found on PATH"):  # not an infra failure
+            kind = next((k for pre, k in (("gen", "codegen"), ("fix", "fix"), ("review_fix", "review_fix"),
+                                          ("strong_fix", "escalate")) if name.startswith(pre)), "other")
+            modelstats.record(self.cfg, self._gen_profiles[name], kind=kind, types=self.project_types,
+                              usable=bool(diff.strip()), passed=chk.passed and not chk.no_checks,
+                              failures=chk.failures, secs=chk.duration)
         self.log(f"[k2loop] {name}: aider_ok={ok} diff_lines={lines} "
                  f"checks={'PASS' if chk.passed else 'FAIL'} failures={chk.failures}")
         self.emit("cand", name=name, aider_ok=ok, passed=chk.passed, failures=chk.failures, lines=lines,
@@ -355,6 +369,7 @@ class Engine:
                 aok, out = run_aider(self.cfg, d, msg, "high", max(600.0, self.left() - 300), self.hint_files,
                                      profile="strong")
         (self.run_dir / "strong_fix.aider.log").write_text(out, encoding="utf-8")
+        self._gen_profiles["strong_fix"] = "strong"
         c = self._check("strong_fix", d, aok, out, gitops.snapshot_diff(d), source=self.cfg["strong"]["model"])
         return c if c.usable and c.chk.passed else None
 
@@ -484,9 +499,11 @@ class Engine:
             gitops.remove_worktree(self.base, p)
 
     def run(self) -> Result:
-        self.emit("task_start", title=self.title, task=self.task[:2000], budget_min=round((self.deadline - self.t0) / 60))
+        self.emit("task_start", title=self.title, task=self.task[:2000], budget_min=round((self.deadline - self.t0) / 60),
+                  coder=self.cfg[self.gen_profile]["model"], coder_reason=self.coder_reason)
         with span(f"task:{self.title}", "AGENT", input__value=self.task[:8000], run_id=self.run_id) as sp:
             res = self._run()
+            res.coder = self.gen_profile
             set_attrs(sp, output__value=res.summary, status=res.status)
         self.emit("task_end", title=self.title, status=res.status, summary=res.summary, files=res.files,
                   sha=res.sha, patch=res.patch_path, mins=round((time.time() - self.t0) / 60, 1))

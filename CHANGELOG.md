@@ -14,7 +14,11 @@
 - **Takılınca araştırır:** başarısız adımın hata mesajı ve tekrar eden eksikler internette aranır, sonuç yeni plana
   girer (`agent.research_on_failure`).
 - **En yakın başarısız deneme korunur:** diff'i ve hata çıktısı sonraki turun planına verilir.
-- **Güçlü model devralır:** çaba seviyesi 2'ye çıkınca (yerel modda) adayları K2 yerine güçlü model yazar.
+- **Kodu yazan model ölçülerek seçilir, büyüklüğe göre değil.** Her aday `model_stats.jsonl`'a kaydedilir (model adı,
+  proje türü, geçti mi, süre). `tot.codegen_profile: auto`: ölçülen geçme oranı daha iyi olan yazar (önce aynı proje
+  türü). Takılınca: açıkça daha iyi olan (`tot.coder_margin`), veri yoksa/fark küçükse takılandan farklı olan.
+  `tot.coder_min_samples` (20) aday birikene kadar varsayılan K2. Yeni komut: `k2loop model-stats`. Open WebUI'da her
+  görevde "✍️ Kodu yazan: … (neden)" satırı.
 - **Plan ⇄ kontrol sonsuz döngüsü kapatıldı:** sadece daha önce söylenmiş eksiklerin tekrar gelmesi ilerleme sayılmaz;
   `agent.max_stalled_rounds` tur üst üste ilerleme olmazsa insana sorulur.
 - **Test yoksa:** uyarı + ilk adım test altyapısı; k2loop'un ürettiği `check.sh` yeni testleri görünce yenilenir.

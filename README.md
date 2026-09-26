@@ -98,7 +98,7 @@ Bir kod hedefi şöyle ilerler:
      commit'lenen adımlar, başarısız denemeler, **en yakın başarısız denemenin diff'i** (doğru kısımları yeniden
      kullanılır) ve **takılınan hatanın internetteki çözümleri** (hata mesajı araştırılır).
    - Her başarısızlıktan sonra **çaba artar**: daha çok aday, daha derin hata ayıklama, daha çok eskalasyon, daha uzun
-     süre; K2 tekrar tekrar takılırsa kodu **güçlü model kendisi yazar**.
+     süre. Takılınca kodu yazacak model **ölçüme göre** yeniden seçilir (aşağıya bakın).
    - Bütün adımlar geçince güçlü model hedefi gerçek diff'le karşılaştırır; eksikler sonraki tura girer. Aynı eksik
      tekrar gelirse araştırılır ve güçlü modele verilir; sadece eski eksiklerin tekrar etmesi ilerleme sayılmaz (sonsuz
      plan ⇄ kontrol döngüsü olmaz). Belirsiz kontrol cevabı asla "bitti" sayılmaz.
@@ -106,6 +106,13 @@ Bir kod hedefi şöyle ilerler:
      görünce kendini yeniler (elle düzenlenmiş `check.sh`'e dokunulmaz).
    - Tur ve süre sınırı varsayılan olarak yok (`agent.max_rounds`, `agent.goal_time_budget_min`: 0 = sınırsız);
      `agent.max_stalled_rounds` (3) tur üst üste ilerleme olmazsa durup insana sorar. `/iptal` her zaman durdurur.
+
+**Kodu hangi model yazar? Ölçülür, tahmin edilmez.** "Büyük" model daha iyi kod yazar demek değildir (ör. 35B
+MoE'nin token başına sadece ~3B'si çalışır; K2 ise koda özel eğitilmiştir). Her aday kaydedilir (model, proje türü,
+testleri geçti mi, süre) ve `tot.codegen_profile: auto` iken kodu **ölçülen geçme oranı** daha iyi olan model yazar;
+önce aynı proje türündeki veriye bakılır. Takılınca: ölçüme göre açıkça daha iyi olan model, veri yoksa ya da fark
+küçükse takılandan **farklı** olan denenir (farklı model farklı hata yapar). Sonuçları görmek için:
+`k2loop model-stats`. Model başına `tot.coder_min_samples` (20) aday birikene kadar varsayılan K2'dir.
 
 Ajan projede commit'lenmemiş değişiklik varsa başlamaz; `.k2loop/check.sh` yoksa üretir. **`.k2loop/check.sh`
 sistemin hakemidir** — istediğin gibi düzenle ve commit'le.

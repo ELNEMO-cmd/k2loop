@@ -273,6 +273,17 @@ def cmd_strong(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_model_stats(a: argparse.Namespace) -> int:
+    from .modelstats import choose_coder, format_table
+    cfg = load_config()
+    print("Kod yazan modellerin ÖLÇÜLEN başarısı (her aday: testleri geçti mi?)")
+    print(format_table(cfg))
+    prof, why = choose_coder(cfg, [])
+    print(f"\nŞu anki seçim (codegen_profile: {cfg['tot'].get('codegen_profile', 'auto')}): "
+          f"{cfg[prof]['model']} — {why}")
+    return 0
+
+
 def cmd_collect(a: argparse.Namespace) -> int:
     n = collect(_root())
     print(f"{n} commit çalışma dalına alındı.")
@@ -607,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("strong", help="güçlü modeli göster/seç: moe (Qwen3.6-35B-A3B, hızlı) | dense (Qwen3.8 27B)")
     p.add_argument("kind", nargs="?", choices=list(STRONG_MODELS))
     p.set_defaults(fn=cmd_strong)
+    p = sub.add_parser("model-stats", help="kod yazan modellerin ölçülen başarısı (hangisi gerçekten iyi?)")
+    p.set_defaults(fn=cmd_model_stats)
     p = sub.add_parser("collect", help="Bernstein'ın merge edemediği k2loop commit'lerini çalışma dalına al")
     p.set_defaults(fn=cmd_collect)
     p = sub.add_parser("stop", help="bu projedeki Bernstein'ı durdur (arka planda çalışmaya devam eder)")

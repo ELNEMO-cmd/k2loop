@@ -47,6 +47,11 @@ DEFAULTS: dict[str, Any] = {
         "candidates": 3, "debug_depth": 2, "debug_branches": 3, "keep_branches": 2, "explore_rate": 0.15,
         "review_votes": 3, "task_time_budget_min": 80, "aider_timeout_min": 25, "check_timeout_min": 15,
         "overlap_checks": True,  # run candidate N's checks on the CPU while K2 writes candidate N+1
+        # who writes code: auto = the model with the better MEASURED pass rate (k2loop model-stats), not the bigger
+        # one | llm (K2) | strong. After a failure the goal loop re-chooses (a clearly better model, else a different one)
+        "codegen_profile": "auto",
+        "coder_min_samples": 20,  # candidates per model before measurements are trusted
+        "coder_margin": 0.05,     # pass-rate gap that counts as "clearly better"
     },
     "agent": {  # `k2loop serve`: continuous goal loop + OpenAI-compatible endpoint for Open WebUI
         "host": "127.0.0.1", "port": 8090, "model_name": "k2agent",
