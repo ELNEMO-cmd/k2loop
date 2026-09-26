@@ -32,9 +32,12 @@ Hiçbir şey bilgisayardan çıkmaz (internete sadece arama için çıkılır).
 ## Kurulum
 
 ```bash
-tar xzf k2loop.tar.gz && cd k2loop
-./install.sh
+git clone https://github.com/<kullanıcı>/k2loop.git && cd k2loop
+./install.sh                 # güçlü model varsayılan olarak MoE (--strong dense: eski Qwen3.8 27B)
 ```
+
+Güncellemek için: `git pull && ./install.sh --skip-root` (yapılmış adımlar atlanır, servisler yeni ayarlarla
+yeniden başlar). Değişiklik geçmişi: [CHANGELOG.md](CHANGELOG.md).
 
 0.1'in üstüne kurulabilir: eski `k2-llm`/`k2-strong` servisleri kapatılır, modeller llama-swap'a taşınır, indirilmiş
 modeller ve Laya logları korunur. Süre 30–60 dk, ~55 GB disk. Log: `~/k2loop-install.log`.

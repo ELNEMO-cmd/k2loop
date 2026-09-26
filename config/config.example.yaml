@@ -31,8 +31,8 @@ roles:                       # yan işleri hangi model yapsın: llm (K2, GPU) | 
   review: llm                # 3'lü review oyu
   agent: helper              # hedefin türünü anlama (araştırma mı kod mu)
 
-strong:                      # Qwen3.8 27B Q4_K_M — GPU+RAM, gerektiğinde K2'nin yerine yüklenir
-  model: qwen3.8-27b
+strong:                      # güçlü model — gerektiğinde K2'nin yerine GPU'ya yüklenir. Değiştirmek: k2loop strong moe|dense
+  model: qwen3.6-35b-a3b     # moe: Qwen3.6-35B-A3B (~21 token/sn) | qwen3.8-27b: yoğun, ~4 token/sn
   temperature: 0.7
   top_p: 0.95
   max_tokens: 24576

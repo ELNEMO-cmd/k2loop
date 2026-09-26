@@ -17,7 +17,7 @@ DEFAULTS: dict[str, Any] = {
     # manager: llama-swap | systemd (old per-model services, kept for existing installs)
     "models": {"manager": "llama-swap", "swap_url": "http://127.0.0.1:8080"},
     "strong": {
-        "base_url": "http://127.0.0.1:8080/v1", "model": "qwen3.8-27b", "api_key": "none",
+        "base_url": "http://127.0.0.1:8080/v1", "model": "qwen3.6-35b-a3b", "api_key": "none",  # `k2loop strong`
         "temperature": 0.7, "top_p": 0.95, "max_tokens": 24576, "request_timeout_s": 10800,
         "template_kwargs": {"enable_thinking": True},
         "plan_samples": 3, "max_escalations_per_task": 1, "final_review": "per_task",

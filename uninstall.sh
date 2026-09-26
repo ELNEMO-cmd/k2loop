@@ -15,3 +15,8 @@ for t in k2loop bernstein aider-chat ruff arize-phoenix local-deep-research; do 
 read -r -p "Modeller, Laya logları, ajan geçmişi ve derlemeler ($DATA) silinsin mi? [e/H] " a
 [ "${a,,}" = "e" ] && rm -rf "$DATA" && echo "silindi"
 echo "Tamam. (CUDA toolkit ve docker kaldırılmadı.)"
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  echo "WSL: Windows tarafında elle kaldırılacaklar:"
+  echo "  - Görev Zamanlayıcı → 'k2loop WSL baslat' görevini sil"
+  echo "  - %USERPROFILE%\\.wslconfig (k2loop için yazıldıysa) → sil, sonra: wsl --shutdown"
+fi
