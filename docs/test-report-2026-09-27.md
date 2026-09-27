@@ -89,3 +89,17 @@ Her biri ayrı bir Issue olarak açıldı: belirti, kanıt, kök neden, önerile
 - [#9](https://github.com/ELNEMO-cmd/k2loop/issues/9) Aider'ı başarısız olan (`aider_ok=False`) adayın diff'i yine aday olarak değerlendiriliyor
 - [#10](https://github.com/ELNEMO-cmd/k2loop/issues/10) Bench adil değil: replay/onarım yalnızca K2 yolunda, 35B doğrudan Aider'a gidiyor
 - [#11](https://github.com/ELNEMO-cmd/k2loop/issues/11) Config yolu sabit (`~/.config/k2loop`): ikinci bir ajanı (test / yeni sürüm) yan yana çalıştırmanın yolu yok
+
+## Son durum (test durduruldu)
+
+Test, görev bitmeden kullanıcı isteğiyle durduruldu.
+
+- Borsa ajanı: https://github.com/ELNEMO-cmd/borsa-agent (gizli), dal `k2loop/20260927-0303-borsa-agent-icinde-python-ile-`.
+  Commit'li ve testli (16 test geçiyor): config, fiyat verisi (yfinance), SMA/RSI, haber + TR/EN duygu skoru
+  (Google News RSS dahil), SQLite'ta kağıt üzerinde broker. Broker testsiz kabul edildi (#2, #3).
+- Yarım kalan: strateji modülü. Hata ayıklama + review düzeltmesiyle testleri geçen bir aday vardı (review'ın bulduğu
+  ters nakit kontrolü ve hiç tetiklenmeyen stop-loss düzeltilmişti), ama ajan commit'ten önce durduruldu ve o
+  worktree kayboldu. Aynı hedef tekrar verilirse bu adımdan başlar (bkz. #6).
+- Yapılmadı: alım-satım ajanı döngüsü, CLI (`run --once`, `report`, `backtest`), backtest, README.
+- Kodda bilinen kusur: 1. adımda K2'nin yazdığı docstring'lerde `bourse_agent` yazım hatası var; sonraki adımlarda
+  modeller bunu import'lara kopyaladı.
