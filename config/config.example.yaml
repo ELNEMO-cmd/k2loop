@@ -75,6 +75,7 @@ agent:                       # `k2loop serve` (systemd: k2-agent) — Open WebUI
   max_rounds: 0              # hedef başına en fazla plan turu (0 = bitene kadar)
   goal_time_budget_min: 0    # bu süreden sonra yeni adım/tur başlamaz (0 = sınırsız)
   max_stalled_rounds: 3      # üst üste bu kadar tur ilerleme olmazsa durup insana sorar
+  max_verify_rounds: 6       # adımlar geçtiği hâlde kontrol bu kadar kez "eksik var" derse durup insana sorar (0 = sınırsız)
   research_on_failure: true  # takılınca hatayı / eksik parçayı internette ara
   verify_goal: true          # adımlar geçince güçlü model hedefi diff'e bakarak kontrol eder
 
@@ -120,6 +121,7 @@ aider:
   edit_format: diff          # küçük dosyalı projelerde 'whole' daha sağlam olabilir
   map_tokens: 2048
   extra_args: []
+  k2_max_tokens: 0           # K2'nin Aider içindeki çıktı tavanı (0 = llm.max_tokens). Düşük değer zor adımlarda cevabı keser
 
 paths:
   data_dir: ~/.local/share/k2loop

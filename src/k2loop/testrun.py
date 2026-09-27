@@ -71,7 +71,7 @@ def run_group(cmd: list[str], cwd: Path, timeout: float) -> tuple[int, str, str,
 
 def run_checks(workdir: Path, timeout: float) -> CheckResult:
     script = workdir / ".k2loop" / "check.sh"
-    t0 = time.time()
+    t0 = time.monotonic()  # a duration: the wall clock jumps (WSL2 resyncs it), shown as "-0.9 sn"
     if not script.exists():
         return CheckResult(True, 0, "K2LOOP_NO_CHECKS (no .k2loop/check.sh)", True, 0, "none", 0.0)
     rc, so, se, timed_out = run_group(["bash", str(script)], workdir, max(30, timeout))
@@ -81,4 +81,4 @@ def run_checks(workdir: Path, timeout: float) -> CheckResult:
     no_checks = "K2LOOP_NO_CHECKS" in out
     passed = rc == 0
     return CheckResult(passed, rc, out, no_checks, 0 if passed else max(1, count_failures(out)),
-                       "ok" if passed else signature(out), time.time() - t0)
+                       "ok" if passed else signature(out), time.monotonic() - t0)

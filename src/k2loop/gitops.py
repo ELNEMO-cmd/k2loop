@@ -7,7 +7,7 @@ from pathlib import Path
 
 # never let these reach a commit / candidate diff (.k2loop/check.sh: the judge must not be editable by the coder)
 PROTECTED = [".k2loop/check.sh"]
-EXCLUDE_PATHS = [*PROTECTED, ".sdd", ".k2loop/runs", ".k2loop/plans", "node_modules", ".pio", ".venv", ":(glob)**/.aider*",
+EXCLUDE_PATHS = [*PROTECTED, ".sdd", ".k2loop/runs", ".k2loop/plans", "node_modules", ".pio", ".venv", ":(glob)**/.aider*", ":(glob)**/.aider*/**",
                  ":(glob)**/__pycache__/**", ".pytest_cache", ".ruff_cache", ".mypy_cache", ":(glob)**/*.pyc"]
 IDENT = ["-c", "user.name=k2loop", "-c", "user.email=k2loop@localhost"]
 

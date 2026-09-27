@@ -151,8 +151,12 @@ class Formatter:
     def _cand(self, ev: dict) -> str:
         ok = ev.get("passed")
         files = ", ".join(f"`{f}`" for f in (ev.get("files") or [])[:5]) or "değişiklik yok"
-        s = (f"  - {'✅' if ok else '❌'} **{ev.get('name')}**: {ev.get('lines')} satır · {files} · test "
-             f"{'GEÇTİ' if ok else 'KALDI (' + str(ev.get('failures')) + ')'} · {ev.get('secs')} sn\n")
+        verdict = ("kontrol yok (projede test yok)" if ok and ev.get("no_checks") else
+                   "test GEÇTİ" if ok else f"test KALDI ({ev.get('failures')})")
+        if not ev.get("lines"):   # an unchanged candidate is never a success, whatever the checks say
+            return f"  - ⚪ **{ev.get('name')}**: değişiklik yok · {ev.get('secs')} sn\n"
+        s = (f"  - {'⚪' if ok and ev.get('no_checks') else '✅' if ok else '❌'} **{ev.get('name')}**: "
+             f"{ev.get('lines')} satır · {files} · {verdict} · {ev.get('secs')} sn\n")
         if not ok and ev.get("check_tail"):
             s += (f"\n<details>\n<summary>{ev.get('name')} test çıktısı</summary>\n\n```\n{ev['check_tail']}\n```\n"
                   "\n</details>\n\n")

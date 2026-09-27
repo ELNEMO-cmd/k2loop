@@ -26,6 +26,9 @@ GOAL:
 
 Produce THREE genuinely different decompositions (e.g. different ordering, granularity or architecture), then pick
 the best one for a small model. Rules for steps:
+- the repository may already implement part of the goal: plan ONLY the work that is missing. Never a step for
+  something that already exists and is tested (check the code you read); extend existing modules instead of
+  re-creating them;
 - small, concrete, independently testable; touch few files; list those files in "files";
 - the description must be self-contained (the coder sees nothing else): what to change, where, and how to test it;
 - include tests in the same step as the behaviour they test;
@@ -278,12 +281,16 @@ one step description at a time, and a step is accepted only if `bash .k2loop/che
 GOAL:
 {goal}
 
+FILES ALREADY IN THE REPOSITORY (work that may be done already):
+{existing}
+
 CANDIDATES (JSON):
 {cands}
 
 Score each candidate 0-10 on: completeness vs goal, step size/clarity for a small model, testability, correct
 ordering/dependencies, no file collisions inside a stage, and sensible reuse of existing work (licence-compatible,
-not over-engineered). Answer ONLY JSON:
+not over-engineered). A step that re-creates a module the repository already has (same purpose, same file) is
+wasted work: score such candidates low. Answer ONLY JSON:
 {{"scores":[...], "best_index":0, "why":"..."}}"""
 
 
@@ -343,7 +350,8 @@ def _local_alternatives(cfg: dict, goal: str, root: Path, log, research: str = "
         if len(alts) == 1:
             return alts, 0, "single candidate"
         log(f"{cfg['strong']['model']}: planlar karşılaştırılıyor (hakem)...")
-        verdict = llm.ask_json(JUDGE_PROMPT.format(n=len(alts), goal=goal,
+        existing = ", ".join(f for f in _tracked(root) if not f.startswith(".k2loop/"))[:3000] or "(empty)"
+        verdict = llm.ask_json(JUDGE_PROMPT.format(n=len(alts), goal=goal, existing=existing,
                                                    cands=json.dumps(alts, ensure_ascii=False)[
                                                        :max(4000, full - len(goal) - 3000)]),
                                "high", temperature=0.2) or {}

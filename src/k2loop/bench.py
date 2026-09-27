@@ -23,7 +23,7 @@ from .aider_runner import run_aider
 from .bench_tasks import TASKS, BenchTask
 from .config import data_dir
 from .engine import CODEGEN_RULES
-from .gitops import IDENT, git, snapshot_diff
+from .gitops import IDENT, diff_lines, git, snapshot_diff
 from .project import render_check_sh
 from .testrun import count_failures, run_group
 
@@ -91,11 +91,11 @@ def attempt(cfg: dict, task: BenchTask, profile: str, rep: int, work: Path, pyte
             timeout: float, aider: Callable = run_aider) -> Attempt:
     repo = make_repo(task, work / f"{task.name}-{profile}-{rep}")
     msg = CODEGEN_RULES + task.prompt
-    t0 = time.time()
+    t0 = time.monotonic()
     ok, out = aider(cfg, repo, msg, "high", timeout, task.hint_files, profile=profile)
-    usable = bool(snapshot_diff(repo).strip())
+    usable = diff_lines(snapshot_diff(repo)) > 0
     passed, vis, fails, test_out = judge(task, repo, pytest)
-    secs = time.time() - t0
+    secs = time.monotonic() - t0
     (repo / ".bench-aider.log").write_text(out, encoding="utf-8")
     (repo / ".bench-tests.log").write_text(test_out, encoding="utf-8")
     note = "" if usable else ("aider timed out" if "timed out" in out[-200:] else "no change")

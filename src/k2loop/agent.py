@@ -570,7 +570,7 @@ class Agent:
                 task += "\n\nFiles: " + ", ".join(sp["files"])
             run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{g.id}-r{rnd}s{i}"
             res = Engine(cfg, task, root, run_id, hb=_CancelHB(self.q),
-                         log=lambda m: None, hint_files=[f for f in sp.get("files", []) if (root / f).exists()],
+                         log=lambda m: None, hint_files=[str(f) for f in sp.get("files", []) if f],
                          project_types=types, title=sp["title"], emit=self.ev.emit).run()
             results.append((sp["title"], res.status, res.summary, sp.get("description", "")))
             self._last_coder = res.coder
@@ -748,6 +748,8 @@ class Agent:
         seen: list[list] = []            # [missing item, rounds it was reported in]
         hard: list[str] = []             # missing items that keep coming back
         finished, unverified, stalled, fails, stop_note = False, False, 0, 0, ""
+        max_verify = int(ac.get("max_verify_rounds", 6) or 0)    # 0 = no limit
+        not_done = 0                     # times every step passed but the verifier still found missing work
         rnd = 0
         while True:
             rnd += 1
@@ -810,6 +812,11 @@ class Agent:
                     stop_note = "adımlar geçti ama hedef doğrulanamadı; lütfen kontrol et"
                     break
                 remaining = v["remaining"]
+                not_done += 1
+                if max_verify and not_done >= max_verify:  # a verifier that finds something new every round
+                    stop_note = (f"adımlar {not_done} kez geçti ama kontrol her seferinde yeni eksik buldu; "
+                                 "insan gerekli")
+                    break
                 for item in remaining:
                     old = next((x for x in seen if _similar(x[0], item)), None)
                     if old:

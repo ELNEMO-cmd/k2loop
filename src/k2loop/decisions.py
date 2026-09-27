@@ -55,7 +55,14 @@ _TEST_RULES: list[tuple[str, list[str]]] = [
 ]
 
 
+_STATIC_FAILED = re.compile(r"=== \[(lint|typecheck)\] FAILED")
+_OTHER_FAILED = re.compile(r"=== \[(?!lint\]|typecheck\])[^\]]+\] FAILED")
+
+
 def classify_test_rule(log: str) -> str:
+    # only a static check (ruff F841, eslint, tsc) failed: not a wrong result, whatever "FAILED" line it printed
+    if _STATIC_FAILED.search(log) and not _OTHER_FAILED.search(log):
+        return "compile_syntax"
     for label, pats in _TEST_RULES:
         if any(re.search(p, log) for p in pats):
             return label

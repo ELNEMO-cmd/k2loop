@@ -1,7 +1,7 @@
 """The ToT / Self-Consistency pipeline for ONE task.
 
 1. Code generation (Self-Consistency): N candidates from K2, each in its own git worktree, checks run on each.
-   Winner = passing candidate with the smallest diff.
+   Winner = passing candidate with the smallest diff (candidates whose checks really ran come first).
 2. Debugging (Tree of Thoughts): if nothing passes, classify the failure (Laya #1), let K2 propose fix
    hypotheses, prune them (Laya #2), try the survivors; repeat up to `debug_depth`, deciding between
    levels whether to continue locally or escalate (Laya #3). Claude gets at most `max_escalations_per_task`.
@@ -15,6 +15,7 @@ helper model (CPU) when `roles.scoring: helper`. Every step is emitted to the ev
 """
 from __future__ import annotations
 
+import re
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -33,13 +34,48 @@ from .testrun import CheckResult, log_tail, run_checks
 from .trace import current_context, set_attrs, setup as trace_setup, span
 
 CHECK_CMD = "bash .k2loop/check.sh"
+# what Aider-bound messages call the checks: a file path in the message makes Aider add that file to the chat
+CHECKS = "the project's automated checks (tests, lint)"
 
 CODEGEN_RULES = (
     "You are implementing exactly ONE task in this repository.\n"
     "Rules: make a minimal but complete change; keep the existing style; add or update tests when the task "
     "changes behaviour; do NOT run shell commands, do NOT call HTTP endpoints, do NOT commit. "
-    f"Correctness is judged by `{CHECK_CMD}`.\n\nTASK:\n"
+    f"Correctness is judged by {CHECKS}.\n\nTASK:\n"
 )
+
+
+def new_files_note(d: Path, files: list[str]) -> str:
+    """Planned files missing in THIS worktree, named as new. Aider only hands existing files to the model, and a model
+    that thinks it may only edit files "added to the chat" asks for the missing ones instead of writing them. Per
+    worktree: in a debug round the previous attempt already created them, and they are then edited, not created."""
+    new = [f for f in files if not (d / f).exists()]
+    if not new:
+        return ""
+    return ("\n\nNEW files to create (they do not exist yet, so nobody can add them to the chat; create each one with "
+            "a SEARCH/REPLACE block whose SEARCH section is empty): " + ", ".join(new))
+
+
+_NO_MODULE = re.compile(r"No module named '([\w.]+)'")
+
+
+def module_hints(output: str, root: Path) -> str:
+    """`No module named 'bourse_agent'` while the repository has `borsa_agent/`: name the likely typo. Seen live: the
+    models took it for a sys.path problem and added conftest.py files for several rounds instead of fixing a name."""
+    import difflib
+    missing = {m.split(".")[0] for m in _NO_MODULE.findall(output)}
+    if not missing or not root.is_dir():
+        return ""
+    local = {p.name for p in root.iterdir() if p.is_dir() and (p / "__init__.py").exists()}
+    local |= {p.stem for p in root.glob("*.py")}
+    notes = []
+    for name in sorted(missing - local):
+        close = difflib.get_close_matches(name, sorted(local), n=1, cutoff=0.75)
+        if close:
+            notes.append(f"`{name}` does not exist, but this repository has the package/module `{close[0]}`: "
+                         f"`{name}` is most likely a typo for `{close[0]}` (fix the name where it is written, "
+                         "do not add path hacks).")
+    return ("\n\nHINT: " + " ".join(notes)) if notes else ""
 
 
 def _str_list(v) -> list[str]:
@@ -57,7 +93,9 @@ class Cand:
 
     @property
     def usable(self) -> bool:
-        return bool(self.diff.strip())
+        # at least one changed line: a diff that only creates EMPTY files (a stub answer turned into `agent.py`)
+        # passed the checks unchanged and won a live step as the smallest "passing" candidate
+        return bool(self.diff.strip()) and self.lines > 0
 
 
 @dataclass
@@ -160,7 +198,19 @@ class Engine:
     def _run_checks(self, name: str, d: Path) -> CheckResult:
         if gitops.restore_protected(d):
             self.log(f"[k2loop] {name}: .k2loop/check.sh was modified by the model; the original is used")
-        return run_checks(d, self._check_timeout())
+        chk = run_checks(d, self._check_timeout())
+        if chk.no_checks:
+            # the project had no tests yet (typical first step: "set up tests"): judge the candidate by the checks
+            # its own changes make detectable, so a candidate that adds working tests beats one that adds none.
+            # check.sh never reaches a candidate diff (gitops.PROTECTED), so this copy stays in the worktree.
+            from .project import detect, render_check_sh
+            found = detect(d)["checks"]
+            if found:
+                (d / ".k2loop" / "check.sh").write_text(render_check_sh(found), encoding="utf-8")
+                chk = run_checks(d, self._check_timeout())
+                self.log(f"[k2loop] {name}: no project checks yet; ran the candidate's own "
+                         f"({', '.join(n for n, _ in found)}): {'PASS' if chk.passed else 'FAIL'}")
+        return chk
 
     def _check_timeout(self) -> float:
         return min(float(self.tot["check_timeout_min"]) * 60, max(60.0, self.left() - 60))
@@ -174,6 +224,7 @@ class Engine:
         diff)."""
         profile = profile or self.gen_profile
         d = self._wt(name, base_diff)
+        message += new_files_note(d, self.hint_files)
         self.emit("cand_start", name=name, msg=message.removeprefix(CODEGEN_RULES)[-300:])
         with span(f"aider:{name}", "TOOL", tool__name="aider", input__value=message[-4000:],
                   llm__model_name=self.cfg[profile]["model"]) as sp:
@@ -205,11 +256,12 @@ class Engine:
             kind = next((k for pre, k in (("gen", "codegen"), ("fix", "fix"), ("review_fix", "review_fix"),
                                           ("strong_fix", "escalate")) if name.startswith(pre)), "other")
             modelstats.record(self.cfg, self._gen_profiles[name], kind=kind, types=self.project_types,
-                              usable=bool(diff.strip()), passed=chk.passed and not chk.no_checks,
+                              usable=gitops.diff_lines(diff) > 0, passed=chk.passed and not chk.no_checks,
                               failures=chk.failures, secs=chk.duration)
         self.log(f"[k2loop] {name}: aider_ok={ok} diff_lines={lines} "
                  f"checks={'PASS' if chk.passed else 'FAIL'} failures={chk.failures}")
-        self.emit("cand", name=name, aider_ok=ok, passed=chk.passed, failures=chk.failures, lines=lines,
+        self.emit("cand", name=name, aider_ok=ok, passed=chk.passed, no_checks=chk.no_checks, failures=chk.failures,
+                  lines=lines,
                   files=gitops.changed_files(diff), secs=round(chk.duration, 1), source=source,
                   aider_tail=out[-1500:], check_tail="" if chk.passed else log_tail(chk.output, 1500))
         return Cand(name, d, diff, lines, chk, source=source)
@@ -292,7 +344,7 @@ class Engine:
             if self.left() < 600:
                 self.notes.append("debug stopped (time budget)")
                 break
-            tail = log_tail(cur.chk.output)
+            tail = log_tail(cur.chk.output) + module_hints(cur.chk.output, cur.path)
             cat, crec = self.decider.classify_failure(tail[-1500:], self.project_types, CHECK_CMD)
             self.emit("decision", name="test_classification", used=cat)
             history.append(cat)
@@ -312,7 +364,7 @@ class Engine:
                 if self.left() < 480:
                     break
                 self.phase("debug", f"level {level} branch {j}/{len(kept)}")
-                msg = (CODEGEN_RULES + self.task + f"\n\nThe current changes FAIL `{CHECK_CMD}`.\n"
+                msg = (CODEGEN_RULES + self.task + f"\n\nThe current changes FAIL {CHECKS}.\n"
                        f"Failure output (tail):\n{tail}\n\nApply this fix hypothesis:\n{h['hypothesis']}\n")
                 b = self._candidate(f"fix{level}_{j}", msg, self.eff["debug"], base_diff=cur.diff)
                 improved = b.chk.passed or b.chk.failures < cur.chk.failures
@@ -356,9 +408,10 @@ class Engine:
         """What the stronger model is told about the small model's attempt."""
         if not cur.usable:
             return ("\n\nA smaller model tried this task but did not change any file. Implement the whole task, "
-                    f"including the tests, so that `{CHECK_CMD}` passes.")
-        return (f"\n\nA smaller model's changes are applied but `{CHECK_CMD}` fails.\n"
-                f"Check output (tail):\n{log_tail(cur.chk.output, 6000)}\n\nFind the real cause and fix it.")
+                    f"including the tests, so that {CHECKS} pass.")
+        return (f"\n\nA smaller model's changes are applied but {CHECKS} fail.\n"
+                f"Check output (tail):\n{log_tail(cur.chk.output, 6000)}{module_hints(cur.chk.output, cur.path)}\n\n"
+                "Find the real cause and fix it.")
 
     def escalate_local(self, cur: Cand) -> Cand | None:
         """Full-local escalation: the strong local model edits through Aider (GPU swap)."""
@@ -373,8 +426,8 @@ class Engine:
                 self.notes.append("local escalation skipped: strong model unavailable")
                 return None
             with span("aider:strong_fix", "TOOL", tool__name="aider", llm__model_name=self.cfg["strong"]["model"]):
-                aok, out = run_aider(self.cfg, d, msg, "high", max(600.0, self.left() - 300), self.hint_files,
-                                     profile="strong")
+                aok, out = run_aider(self.cfg, d, msg + new_files_note(d, self.hint_files), "high",
+                                     max(600.0, self.left() - 300), self.hint_files, profile="strong")
         (self.run_dir / "strong_fix.aider.log").write_text(out, encoding="utf-8")
         self._gen_profiles["strong_fix"] = "strong"
         c = self._check("strong_fix", d, aok, out, gitops.snapshot_diff(d), source=self.cfg["strong"]["model"])
@@ -521,7 +574,8 @@ class Engine:
             cands = self.codegen()
             passing = self._passing(cands)
             source = "k2-sc"
-            win = min(passing, key=lambda c: c.lines) if passing else None
+            # really tested first (a candidate that adds passing tests beats one nothing could check), then smallest
+            win = min(passing, key=lambda c: (c.chk.no_checks, c.lines)) if passing else None
             if win is None:
                 usable = sorted([c for c in cands if c.usable], key=lambda c: (c.chk.failures, c.lines))
                 if usable:

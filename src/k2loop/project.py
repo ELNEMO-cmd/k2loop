@@ -6,6 +6,21 @@ import shutil
 from pathlib import Path
 
 
+# without a project ruff config only real errors fail a candidate (syntax, undefined names, unused variables/
+# imports...): newer ruff versions enable style rules by default (UP006 "use list instead of List", RUF012...)
+RUFF_ERRORS = "E4,E7,E9,F"
+
+
+def _has_ruff_config(root: Path) -> bool:
+    if (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
+        return True
+    pp = root / "pyproject.toml"
+    try:
+        return pp.exists() and "[tool.ruff" in pp.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
 def detect(root: Path) -> dict:
     types: list[str] = []
     checks: list[tuple[str, str]] = []
@@ -16,9 +31,11 @@ def detect(root: Path) -> dict:
     if has_py or py_tests:
         types.append("python")
         if shutil.which("ruff"):
-            checks.append(("lint", "ruff check ."))
+            checks.append(("lint", "ruff check ." if _has_ruff_config(root) else f"ruff check --select {RUFF_ERRORS} ."))
         if py_tests:
-            checks.append(("tests", "$PYTEST -x -q"))
+            # no -x: the failure count is the engine's progress signal (a fix that turns 5 failures into 1 is kept)
+            # and the model should see every failure, not one at a time
+            checks.append(("tests", "$PYTEST -q"))
         else:
             notes.append("Python: test bulunamadı (tests/ veya test_*.py). Sadece lint çalışacak.")
 
@@ -72,13 +89,25 @@ ROOT="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd
 PY="python3"; [ -x "$ROOT/.venv/bin/python" ] && PY="$ROOT/.venv/bin/python"; [ -x ".venv/bin/python" ] && PY=".venv/bin/python"
 # pytest: projenin venv'i > sistem python > uv (proje bağımlılıklarını geçici ortama kurar)
 PYTEST="$PY -m pytest"
-if ! "$PY" -c "import pytest" >/dev/null 2>&1 && command -v uv >/dev/null; then PYTEST="uv run --quiet --with pytest python -m pytest"; fi
+if ! "$PY" -c "import pytest" >/dev/null 2>&1 && command -v uv >/dev/null; then
+  PYTEST="uv run --quiet --with pytest python -m pytest"
+  # requirements.txt projects: without this every test that imports a dependency fails with ModuleNotFoundError
+  [ -f requirements.txt ] && [ ! -f pyproject.toml ] && PYTEST="uv run --quiet --no-project --with pytest --with-requirements requirements.txt python -m pytest"
+fi
 # worktree'lerde bağımlılık klasörleri yok: ana repodakilere bağla (commit'e girmez, k2loop hariç tutar)
 [ -f package.json ] && [ ! -e node_modules ] && [ -d "$ROOT/node_modules" ] && ln -s "$ROOT/node_modules" node_modules
 [ -f package.json ] && [ ! -e node_modules ] && { npm ci --silent --no-audit --no-fund || npm install --silent --no-audit --no-fund; }
 [ -f platformio.ini ] && [ ! -e .pio/libdeps ] && [ -d "$ROOT/.pio/libdeps" ] && mkdir -p .pio && ln -s "$ROOT/.pio/libdeps" .pio/libdeps
 run() { echo "=== [$1] $2"; bash -c "$2"; rc=$?; if [ $rc -ne 0 ]; then echo "=== [$1] FAILED (exit $rc)"; exit $rc; fi; echo "=== [$1] OK"; }
+# lint/typecheck do not stop the run: the tests still run, so a lint error never hides failing tests
+soft() { echo "=== [$1] $2"; bash -c "$2"; rc=$?; if [ $rc -ne 0 ]; then echo "=== [$1] FAILED (exit $rc)"; SOFT_FAILED="${SOFT_FAILED:-} $1"; else echo "=== [$1] OK"; fi; }
 '''
+
+
+# Checks that never block the next ones. A lint failure that stopped the run was counted as ONE failure, so a
+# candidate with an unused variable looked better than one with 5 failing tests, and the escalation was told "only
+# a lint error" while the tests were broken (live: the strong model deleted the variable the real fix needed).
+SOFT_CHECKS = ("lint", "typecheck")
 
 
 def render_check_sh(checks: list[tuple[str, str]]) -> str:
@@ -86,6 +115,8 @@ def render_check_sh(checks: list[tuple[str, str]]) -> str:
     if not checks:
         body.append('echo "K2LOOP_NO_CHECKS"\nexit 0\n')
     for name, cmd in checks:
-        body.append(f'run {name} "{cmd}"\n')
+        body.append(f'{"soft" if name in SOFT_CHECKS else "run"} {name} "{cmd}"\n')
+    if any(name in SOFT_CHECKS for name, _ in checks):
+        body.append('[ -n "${SOFT_FAILED:-}" ] && { echo "=== CHECKS FAILED:${SOFT_FAILED}"; exit 1; }\n')
     body.append('echo "=== ALL CHECKS PASSED"\n')
     return "".join(body)

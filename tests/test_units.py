@@ -193,7 +193,7 @@ def test_project_and_check_sh(tmp_path):
     names = [n for n, _ in info["checks"]]
     assert "tests" in names and "build" in names
     sh = render_check_sh(info["checks"])
-    assert "pio test -e native" in sh and "$PYTEST -x -q" in sh and "uv run --quiet --with pytest" in sh
+    assert "pio test -e native" in sh and "$PYTEST -q" in sh and '$PYTEST -x' not in sh and "uv run --quiet --with pytest" in sh
     assert subprocess.run(["bash", "-n"], input=sh, text=True).returncode == 0
     assert "K2LOOP_NO_CHECKS" in render_check_sh([])
 
@@ -372,6 +372,9 @@ def test_local_plan_prompt_survives_braces(tmp_path, monkeypatch):
     alts, best, _ = planner._local_alternatives(cfg, "goal {with braces}", repo, log=lambda *_: None)
     assert len(alts) == 2 and best == 1
     assert '{"scripts": {"test": "jest"}}' in seen[0] and "goal {with braces}" in seen[0]
+    judge = next(x for x in seen if "candidate plans" in x)
+    assert "FILES ALREADY IN THE REPOSITORY" in judge and "package.json" in judge   # the judge sees what exists
+    assert any("plan ONLY the work that is missing" in x for x in seen)
 
 
 def _mini_repo(tmp_path):
@@ -430,3 +433,138 @@ def test_input_budget_scales_with_context():
     small = input_budget_chars(cfg)
     cfg["strong"]["context"] = 65536
     assert input_budget_chars(cfg) > small >= 12000
+
+
+def test_searxng_retries_with_keywords_and_names_blocked_engines(monkeypatch):
+    import copy
+
+    from k2loop import research
+    cfg = copy.deepcopy(DEFAULTS)
+    cfg["research"]["ldr_user"] = ""
+    asked = []
+
+    def fake(url, q, n=8, timeout=20):
+        asked.append(q)
+        return [], ["duckduckgo: CAPTCHA", "brave: Suspended: too many requests"]
+
+    monkeypatch.setattr(research, "searxng_query", fake)
+    events = []
+    res = research.Researcher(cfg, lambda kind, **kw: events.append(kw)).run(
+        "Existing open-source projects, libraries or code examples for: python borsa ajanı: haber ve RSI ile alım satım")
+    assert len(asked) == 2 and asked[1] == "open-source python borsa ajanı haber RSI alım satım"
+    assert "CAPTCHA" in res["error"] and "LDR" in res["error"]
+    assert any("engelledi" in str(e.get("msg")) for e in events)
+
+
+def test_check_sh_installs_requirements_for_uv_pytest(tmp_path):
+    (tmp_path / "requirements.txt").write_text("pyyaml\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a():\n    pass\n")
+    sh = render_check_sh(detect(tmp_path)["checks"])
+    assert "--with-requirements requirements.txt" in sh and "[ ! -f pyproject.toml ]" in sh
+
+
+def test_lint_failure_is_not_a_logic_failure():
+    lint = ("=== [lint] ruff check .\nF841 Local variable `expected` is assigned to but never used\n"
+            "Found 1 error.\n=== [lint] FAILED (exit 1)\n")
+    assert classify_test_rule(lint) == "compile_syntax"
+    assert classify_test_rule("=== [tests] FAILED (exit 1)\nE   AssertionError\n1 failed") == "assertion_logic"
+    assert classify_test_rule("=== [lint] OK\n=== [tests] FAILED\nModuleNotFoundError: x") == "import_dependency"
+    both = lint + "=== [tests] FAILED (exit 1)\nE   KeyError: 'AAPL'\nFAILED tests/t.py::test_buy\n5 failed"
+    assert classify_test_rule(both) == "assertion_logic"          # tests failed too: that is the real problem
+
+
+def test_lint_failure_does_not_hide_test_failures(tmp_path):
+    sh = render_check_sh([("lint", "exit 1"), ("tests", "echo '5 failed'; exit 1")])
+    (tmp_path / "c.sh").write_text(sh)
+    r = subprocess.run(["bash", str(tmp_path / "c.sh")], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode != 0 and "[tests] FAILED" in r.stdout and count_failures(r.stdout) == 5
+    ok = render_check_sh([("lint", "true"), ("tests", "true")])
+    (tmp_path / "ok.sh").write_text(ok)
+    r = subprocess.run(["bash", str(tmp_path / "ok.sh")], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0 and "ALL CHECKS PASSED" in r.stdout
+
+
+def test_ruff_lint_uses_error_rules_unless_the_project_configures_ruff(tmp_path):
+    import shutil
+    if not shutil.which("ruff"):
+        return
+    (tmp_path / "requirements.txt").write_text("pyyaml\n")
+    assert ("lint", "ruff check --select E4,E7,E9,F .") in detect(tmp_path)["checks"]
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff.lint]\nselect = ['ALL']\n")
+    assert ("lint", "ruff check .") in detect(tmp_path)["checks"]
+
+
+def test_new_file_note_is_per_worktree(tmp_path):
+    from k2loop.engine import new_files_note
+    (tmp_path / "a.py").write_text("")
+    note = new_files_note(tmp_path, ["a.py", "pkg/new.py"])
+    assert "NEW files to create" in note and note.rstrip().endswith("pkg/new.py") and "a.py," not in note
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "new.py").write_text("")          # a debug round: the previous attempt created it
+    assert new_files_note(tmp_path, ["a.py", "pkg/new.py"]) == ""
+
+
+def test_unchanged_candidate_is_not_shown_as_success():
+    from k2loop.gateway import Formatter
+    f = Formatter()
+    out = f._cand({"name": "gen1", "passed": True, "lines": 0, "files": [], "secs": 1.4})
+    assert "✅" not in out and "değişiklik yok" in out
+
+
+def test_aider_never_scrapes_urls_from_the_task(tmp_path, monkeypatch):
+    import copy
+    import shutil
+
+    from k2loop import aider_runner
+    cfg = copy.deepcopy(DEFAULTS)
+    cfg["paths"]["data_dir"] = str(tmp_path / "data")
+    cfg["aider"]["k2_adapter"] = False
+    seen = []
+    monkeypatch.setattr(shutil, "which", lambda b: "/usr/bin/" + b)
+    monkeypatch.setattr(aider_runner, "run_group", lambda cmd, cwd, t: (seen.append(cmd), (0, "", "", False))[1])
+    aider_runner.run_aider(cfg, tmp_path, "use https://news.google.com/rss/search?q=X", "high", 1500)
+    assert "--no-detect-urls" in seen[0]
+    assert seen[0][seen[0].index("--timeout") + 1] == "1500"     # not Aider's own 600 s API timeout
+
+
+def test_module_typo_is_named(tmp_path):
+    from k2loop.engine import module_hints
+    (tmp_path / "borsa_agent").mkdir()
+    (tmp_path / "borsa_agent" / "__init__.py").write_text("")
+    out = "E   ModuleNotFoundError: No module named 'bourse_agent'\nERROR tests/test_x.py"
+    hint = module_hints(out, tmp_path)
+    assert "bourse_agent" in hint and "`borsa_agent`" in hint and "typo" in hint
+    assert module_hints("No module named 'yaml'", tmp_path) == ""       # a real missing dependency: no guess
+    assert module_hints("all good", tmp_path) == ""
+
+
+def test_k2_output_is_capped_in_aider(tmp_path):
+    import copy
+
+    import yaml as _yaml
+
+    from k2loop.aider_runner import _settings_files
+    cfg = copy.deepcopy(DEFAULTS)
+    cfg["paths"]["data_dir"] = str(tmp_path)
+    cfg["llm"]["max_tokens"] = 32768
+    cfg["llm"]["context"] = 65536
+    files, meta = _settings_files(cfg, "llm")
+    assert _yaml.safe_load(files["high"].read_text())[0]["extra_params"]["max_tokens"] == 32768   # default: no cap
+    cfg["aider"]["k2_max_tokens"] = 16384
+    files, meta = _settings_files(cfg, "llm")
+    assert _yaml.safe_load(files["high"].read_text())[0]["extra_params"]["max_tokens"] == 16384
+    files, meta = _settings_files(cfg, "strong")                                # never the strong model
+    assert _yaml.safe_load(files["high"].read_text())[0]["extra_params"]["max_tokens"] != 16384
+
+
+def test_aider_cache_directory_never_reaches_a_diff(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "i"], cwd=tmp_path, check=True)
+    (tmp_path / ".aider.tags.cache.v4").mkdir()
+    (tmp_path / ".aider.tags.cache.v4" / "cache.db-wal").write_bytes(b"\\x00" * 64)
+    (tmp_path / "a.py").write_text("x = 2\n")
+    diff = gitops.snapshot_diff(tmp_path)
+    assert "a.py" in diff and ".aider.tags.cache" not in diff

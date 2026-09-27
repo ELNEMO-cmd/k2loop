@@ -63,6 +63,8 @@ DEFAULTS: dict[str, Any] = {
         "max_rounds": 0,             # planning rounds per goal (0 = until done)
         "goal_time_budget_min": 0,   # no new step/round starts after this (0 = no limit)
         "max_stalled_rounds": 3,     # stop and ask a human after this many rounds in a row without progress
+        "max_verify_rounds": 6,      # stop and ask a human when the goal check said "not done" this often although
+                                     # every step passed (a verifier that keeps finding new items never ends)
         "research_on_failure": True, # stuck? search the internet for the failing error / the missing piece
         "verify_goal": True,         # when all steps pass, the strong model checks the goal against the diff
     },
@@ -96,7 +98,9 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True, "model_profile": "helper", "timeout_s": 60,
         "thresholds": {"test_classification": 0.70, "branch_pruning": 0.60, "retry_escalate": 0.75},
     },
-    "aider": {"binary": "aider", "edit_format": "diff", "map_tokens": 2048, "extra_args": []},
+    # k2_max_tokens: optional output cap for K2 inside Aider (0 = llm.max_tokens). A cap cuts runaway answers short,
+    # but on hard steps K2 thinks productively past 16k tokens (live: 3/3 candidates ended at the cap with no answer)
+    "aider": {"binary": "aider", "edit_format": "diff", "map_tokens": 2048, "extra_args": [], "k2_max_tokens": 0},
     "paths": {"data_dir": "~/.local/share/k2loop"},
 }
 

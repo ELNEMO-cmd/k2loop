@@ -20,6 +20,9 @@ def _settings_files(cfg: dict, profile: str = "llm") -> tuple[dict[str, Path], P
     name = f"openai/{c['model']}"
     ctx = int(c.get("context") or 32768)
     mt = effective_max_tokens(cfg, profile)
+    cap = int(cfg["aider"].get("k2_max_tokens") or 0)
+    if profile == "llm" and cap:
+        mt = min(mt, cap)
     files = {}
     for effort in ("high", "medium", "low"):
         ctk = {"reasoning_effort": effort} if profile == "llm" else dict(c.get("template_kwargs") or {})
@@ -67,6 +70,12 @@ def _run(cfg: dict, a: dict, binary: str, settings: dict, meta: Path, c: dict, b
            "--yes-always", "--no-auto-commits", "--no-dirty-commits", "--no-gitignore", "--no-pretty",
            "--no-stream", "--no-show-model-warnings", "--no-check-update", "--analytics-disable",
            "--no-suggest-shell-commands", "--no-restore-chat-history",
+           # a URL in the task (plans name APIs/feeds) made Aider scrape it: it tried to install Playwright with sudo,
+           # the page overflowed K2's context and the run hung until the timeout
+           "--no-detect-urls",
+           # Aider's own API timeout is 600 s (aider/models.py request_timeout): the strong model thinking for longer
+           # was cut at exactly 10:00 every time (llama-swap: 499 after 10m0.1s); our process timeout is the limit
+           "--timeout", str(int(max(60, timeout))),
            "--input-history-file", str(hist / "input.txt"), "--chat-history-file", str(hist / "chat.md"),
            "--map-tokens", str(a.get("map_tokens", 2048)), *a.get("extra_args", []),
            "--message", message, *[f for f in (files or []) if (workdir / f).exists()]]

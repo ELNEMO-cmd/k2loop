@@ -261,6 +261,13 @@ def test_goal_loop_verifier_ping_pong_is_stopped(tmp_path, monkeypatch):
     assert any("--out" in q for q in RESEARCH_QUERIES)                  # ...and the missing piece is researched
 
 
+
+def test_goal_loop_stops_when_verifier_keeps_inventing_new_items(tmp_path, monkeypatch):
+    new_each_round = [{"done": False, "remaining": [w], "why": ""} for w in (
+        "logging", "docstrings", "type hints", "README section", "CLI --verbose", "retry policy", "dark mode", "man page")]
+    status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done"]] * 8, new_each_round)
+    assert status == "failed" and len(goals) == 6 and "yeni eksik buldu" in text  # agent.max_verify_rounds (6)
+
 def test_goal_loop_researches_failure_and_carries_closest_attempt(tmp_path, monkeypatch):
     status, text, goals = _loop_agent(tmp_path, monkeypatch, [["done", "human"], ["done"]],
                                       [{"done": True, "remaining": [], "why": "tamam"}])
@@ -319,6 +326,60 @@ def test_engine_lets_strong_model_write_code_when_boosted(tmp_path, monkeypatch)
     monkeypatch.setattr("k2loop.engine.run_aider", fake_aider)
     res = Engine(cfg, "task", repo, "r2", log=lambda m: None, emit=lambda *a, **k: None).run()
     assert res.status == "done" and used == ["strong"]
+
+
+
+def test_without_project_checks_candidates_are_judged_by_their_own_tests(tmp_path, monkeypatch):
+    """First step of a project without tests: a candidate adding a passing test must win over a smaller one that
+    adds none, and one adding a failing test must lose (before: all three 'passed' and the smallest won)."""
+    repo = _repo(tmp_path, 'echo "K2LOOP_NO_CHECKS"\nexit 0\n')
+    cfg = _cfg(tmp_path)
+    cfg["tot"]["candidates"] = 3
+    cfg["tot"]["codegen_profile"] = "llm"
+    cfg["tot"]["overlap_checks"] = False
+    cfg["strong"]["final_review"] = "none"
+    cfg["tot"]["review_votes"] = 0
+    n = iter(range(3))
+
+    def fake_aider(cfg, d, msg, effort, timeout, files=None, profile="llm"):
+        d, i = Path(d), next(n)
+        (d / "a.py").write_text("x = 2\n")
+        if i < 2:
+            (d / "pyproject.toml").write_text('[project]\nname = "a"\nversion = "0"\n\n'
+                                              '[tool.pytest.ini_options]\npythonpath = ["."]\n')
+            (d / "tests").mkdir()
+            (d / "tests" / "test_a.py").write_text(f"import a\n\n\ndef test_a():\n    assert a.x == {3 if i == 0 else 2}\n")
+        return True, "ok"
+
+    monkeypatch.setattr("k2loop.engine.run_aider", fake_aider)
+    events = []
+    res = Engine(cfg, "set up tests", repo, "r3", log=lambda m: None, emit=lambda k, **kw: events.append((k, kw))).run()
+    cands = {kw["name"]: kw for k, kw in events if k == "cand"}
+    assert not cands["gen1"]["passed"]                                         # its own test fails
+    assert cands["gen2"]["passed"] and not cands["gen2"]["no_checks"]          # its own test passes
+    assert cands["gen3"]["passed"] and cands["gen3"]["no_checks"]              # nothing to run
+    assert res.status == "done" and "tests/test_a.py" in res.files             # the tested one won
+
+
+
+def test_candidate_that_only_creates_an_empty_file_is_not_a_winner(tmp_path, monkeypatch):
+    repo = _repo(tmp_path, "exit 0\n")
+    cfg = _cfg(tmp_path)
+    cfg["tot"]["candidates"] = 1
+    cfg["tot"]["codegen_profile"] = "llm"
+    cfg["tot"]["debug_depth"] = 0
+    cfg["strong"]["final_review"] = "none"
+    cfg["strong"]["max_escalations_per_task"] = 0
+    cfg["claude"]["enabled"] = False
+    cfg["tot"]["review_votes"] = 0
+
+    def fake_aider(cfg, d, msg, effort, timeout, files=None, profile="llm"):
+        (Path(d) / "agent.py").write_text("")          # the stub answer: an empty new module
+        return False, "timed out"
+
+    monkeypatch.setattr("k2loop.engine.run_aider", fake_aider)
+    res = Engine(cfg, "implement the agent", repo, "r4", log=lambda m: None, emit=lambda *a, **k: None).run()
+    assert res.status != "done" and not (repo / "agent.py").exists()
 
 
 # ---------------------------------------------------------------- review round 2
