@@ -116,3 +116,6 @@ Aynı hedef, aynı dal (`k2-adapter-fixes`), yeniden başlatmadan sonra tekrar v
   - [#12](https://github.com/ELNEMO-cmd/k2loop/issues/12) K2 adapter: K2'nin kodu kayboluyor (yarım blok + reasoning, `finish_reason=length`, boş cevap)
   - [#13](https://github.com/ELNEMO-cmd/k2loop/issues/13) Hiçbir şey değiştirmeyen düzeltme denemesi yine aday sayılıyor ve deneme hakkı yiyor
   - [#14](https://github.com/ELNEMO-cmd/k2loop/issues/14) Import hatasını gideren deneme "daha kötü" sayılıyor; hata ayıklama ve 35B devri kırık adaydan (gen1) devam ediyor
+  - [#15](https://github.com/ELNEMO-cmd/k2loop/issues/15) 35B kod yazarken düşünme tüm token bütçesini (16384) yiyor; cevap boş, aday "değişiklik yok"
+- 2. tur (kod: 35B): plan 3 adıma indi (strateji, backtest, CLI). Hedefteki günlük işlem sınırı / `report` komutu / README
+  plan adımı olarak yok; CLI adımına sığdırılmış olabilir ya da atlanmış olabilir. Sonuçta kontrol edilecek.
