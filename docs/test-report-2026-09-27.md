@@ -110,8 +110,9 @@ Aynı hedef, aynı dal (`k2-adapter-fixes`), yeniden başlatmadan sonra tekrar v
 
 - Planlama bu kez yalnızca kalan işi kapsadı (4 adım: strateji, ajan döngüsü, CLI, README). 19 numaralı düzeltme işe yaradı.
 - Borsa ajanındaki `bourse_agent` yazım hatası kullanıcı isteğiyle elle düzeltildi (borsa-agent `6772993`).
-- Strateji adımı: K2'nin 8 denemesinin hiçbiri geçmedi, adım 35B'ye devredildi. Denemelerden 2'si boş kaldı,
+- Strateji adımı: K2'nin 8 denemesinin hiçbiri geçmedi, adım 35B'ye devredildi. 35B de geçemedi, çünkü ona import hatası olan aday verildi (#14). Denemelerden 2'si boş kaldı,
   2 düzeltme turu da hiçbir şeyi değiştirmedi.
 - Yeni açık sorunlar:
   - [#12](https://github.com/ELNEMO-cmd/k2loop/issues/12) K2 adapter: K2'nin kodu kayboluyor (yarım blok + reasoning, `finish_reason=length`, boş cevap)
   - [#13](https://github.com/ELNEMO-cmd/k2loop/issues/13) Hiçbir şey değiştirmeyen düzeltme denemesi yine aday sayılıyor ve deneme hakkı yiyor
+  - [#14](https://github.com/ELNEMO-cmd/k2loop/issues/14) Import hatasını gideren deneme "daha kötü" sayılıyor; hata ayıklama ve 35B devri kırık adaydan (gen1) devam ediyor
