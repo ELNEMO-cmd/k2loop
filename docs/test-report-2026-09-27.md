@@ -79,13 +79,13 @@ parayla kullanılmamalı.
 
 Her biri ayrı bir Issue olarak açıldı: belirti, kanıt, kök neden, önerilen çözüm.
 
-- A. Review'da oybirliğiyle reddedilen aday, düzeltme başarısız olunca yine de commit'leniyor
-- B. Adım kabulünde "yeni davranış için test var mı?" kontrolü yok
-- C. K2 düşünmesini cevaba döküyor (taslak bloklar + son JSON); adapter güvenle ayıklayamıyor
-- D. K2 zaman zaman token sınırına kadar döngüye giriyor (~10 dk, kullanılamaz cevap)
-- E. Ajan yeniden başlayınca hedefe kaldığı yerden devam edemiyor (her seferinde ~30 dk yeniden planlama)
-- F. install.sh'in SearXNG ayarında yalnızca 3 web motoru var; kısa sürede engelleniyorlar
-- G. Eski şablonla üretilmiş check.sh'ler "kullanıcı düzenlemiş" sayılıyor ve düzeltmeleri hiç almıyor
-- H. Aider'ı başarısız olan (`aider_ok=False`) adayın diff'i yine aday olarak değerlendiriliyor
-- I. Bench adil değil: replay/onarım yalnızca K2 yolunda, 35B doğrudan Aider'a gidiyor
-- J. Config yolu sabit (`~/.config/k2loop`): ikinci bir ajanı (test / yeni sürüm) yan yana çalıştırmanın yolu yok
+- [#2](https://github.com/ELNEMO-cmd/k2loop/issues/2) Review'da oybirliğiyle reddedilen aday, düzeltme başarısız olunca yine de commit'leniyor
+- [#3](https://github.com/ELNEMO-cmd/k2loop/issues/3) Adım kabulünde "yeni davranış için test var mı?" kontrolü yok
+- [#4](https://github.com/ELNEMO-cmd/k2loop/issues/4) K2 düşünmesini cevaba döküyor (taslak bloklar + son JSON); adapter güvenle ayıklayamıyor
+- [#5](https://github.com/ELNEMO-cmd/k2loop/issues/5) K2 zaman zaman token sınırına kadar döngüye giriyor (~10 dk, kullanılamaz cevap)
+- [#6](https://github.com/ELNEMO-cmd/k2loop/issues/6) Ajan yeniden başlayınca hedefe kaldığı yerden devam edemiyor (her seferinde ~30 dk yeniden planlama)
+- [#7](https://github.com/ELNEMO-cmd/k2loop/issues/7) install.sh'in SearXNG ayarında yalnızca 3 web motoru var; kısa sürede engelleniyorlar
+- [#8](https://github.com/ELNEMO-cmd/k2loop/issues/8) Eski şablonla üretilmiş check.sh'ler "kullanıcı düzenlemiş" sayılıyor ve düzeltmeleri hiç almıyor
+- [#9](https://github.com/ELNEMO-cmd/k2loop/issues/9) Aider'ı başarısız olan (`aider_ok=False`) adayın diff'i yine aday olarak değerlendiriliyor
+- [#10](https://github.com/ELNEMO-cmd/k2loop/issues/10) Bench adil değil: replay/onarım yalnızca K2 yolunda, 35B doğrudan Aider'a gidiyor
+- [#11](https://github.com/ELNEMO-cmd/k2loop/issues/11) Config yolu sabit (`~/.config/k2loop`): ikinci bir ajanı (test / yeni sürüm) yan yana çalıştırmanın yolu yok
