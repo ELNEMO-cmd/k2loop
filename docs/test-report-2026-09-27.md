@@ -103,3 +103,15 @@ Test, görev bitmeden kullanıcı isteğiyle durduruldu.
 - Yapılmadı: alım-satım ajanı döngüsü, CLI (`run --once`, `report`, `backtest`), backtest, README.
 - Kodda bilinen kusur: 1. adımda K2'nin yazdığı docstring'lerde `bourse_agent` yazım hatası var; sonraki adımlarda
   modeller bunu import'lara kopyaladı.
+
+## 2. çalıştırma (22:20'de yeniden başlatıldı)
+
+Aynı hedef, aynı dal (`k2-adapter-fixes`), yeniden başlatmadan sonra tekrar verildi.
+
+- Planlama bu kez yalnızca kalan işi kapsadı (4 adım: strateji, ajan döngüsü, CLI, README). 19 numaralı düzeltme işe yaradı.
+- Borsa ajanındaki `bourse_agent` yazım hatası kullanıcı isteğiyle elle düzeltildi (borsa-agent `6772993`).
+- Strateji adımı: K2'nin 8 denemesinin hiçbiri geçmedi, adım 35B'ye devredildi. Denemelerden 2'si boş kaldı,
+  2 düzeltme turu da hiçbir şeyi değiştirmedi.
+- Yeni açık sorunlar:
+  - [#12](https://github.com/ELNEMO-cmd/k2loop/issues/12) K2 adapter: K2'nin kodu kayboluyor (yarım blok + reasoning, `finish_reason=length`, boş cevap)
+  - [#13](https://github.com/ELNEMO-cmd/k2loop/issues/13) Hiçbir şey değiştirmeyen düzeltme denemesi yine aday sayılıyor ve deneme hakkı yiyor
